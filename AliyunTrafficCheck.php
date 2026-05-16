@@ -39,6 +39,11 @@ class AliyunTrafficCheck
         return $this->initError;
     }
 
+    public function getDatabase()
+    {
+        return $this->db;
+    }
+
     public function isInitialized()
     {
         if ($this->initError)
@@ -49,6 +54,11 @@ class AliyunTrafficCheck
     public function getAdminPassword()
     {
         return $this->configManager->get('admin_password', '');
+    }
+
+    public function getCronKey()
+    {
+        return $this->configManager->getCronKey();
     }
 
     public function login($password)
@@ -65,11 +75,7 @@ class AliyunTrafficCheck
             throw new Exception("错误次数过多，请 15 分钟后再试。");
         }
 
-        $adminPass = $this->getAdminPassword();
-        if (empty($adminPass))
-            return false;
-
-        if (hash_equals((string) $adminPass, (string) $password)) {
+        if ($this->configManager->verifyAdminPassword($password)) {
             $this->db->clearLoginAttempts($ip);
             $this->db->addLog('info', "管理员登录成功 [IP: {$ip}]");
             return true;
@@ -107,7 +113,8 @@ class AliyunTrafficCheck
         $accounts = $this->configManager->getAccounts();
 
         $config = [
-            'admin_password' => $settings['admin_password'] ?? '',
+            // 密码和密钥等敏感字段不再返回给前端
+            'admin_password' => '',
             'traffic_threshold' => (int) ($settings['traffic_threshold'] ?? 95),
             'enable_schedule_email' => ($settings['enable_schedule_email'] ?? '0') === '1',
             'shutdown_mode' => $settings['shutdown_mode'] ?? 'KeepCharging',
@@ -121,18 +128,18 @@ class AliyunTrafficCheck
                 'host' => $settings['notify_host'] ?? '',
                 'port' => $settings['notify_port'] ?? 465,
                 'username' => $settings['notify_username'] ?? '',
-                'password' => $settings['notify_password'] ?? '',
+                'password' => '', // 敏感字段脱敏
                 'secure' => $settings['notify_secure'] ?? 'ssl',
                 'telegram' => [
                     'enabled' => ($settings['notify_tg_enabled'] ?? '0') === '1',
-                    'token' => $settings['notify_tg_token'] ?? '',
+                    'token' => '', // 敏感字段脱敏
                     'chat_id' => $settings['notify_tg_chat_id'] ?? '',
                     'proxy_type' => $settings['notify_tg_proxy_type'] ?? 'none',
                     'proxy_url' => $settings['notify_tg_proxy_url'] ?? '',
                     'proxy_ip' => $settings['notify_tg_proxy_ip'] ?? '',
                     'proxy_port' => $settings['notify_tg_proxy_port'] ?? '',
                     'proxy_user' => $settings['notify_tg_proxy_user'] ?? '',
-                    'proxy_pass' => $settings['notify_tg_proxy_pass'] ?? ''
+                    'proxy_pass' => '' // 敏感字段脱敏
                 ],
                 'webhook' => [
                     'enabled' => ($settings['notify_wh_enabled'] ?? '0') === '1',
@@ -149,7 +156,7 @@ class AliyunTrafficCheck
         foreach ($accounts as $row) {
             $config['Accounts'][] = [
                 'AccessKeyId' => $row['access_key_id'],
-                'AccessKeySecret' => $row['access_key_secret'],
+                'AccessKeySecret' => '', // 敏感字段脱敏，不再返回
                 'regionId' => $row['region_id'],
                 'instanceId' => $row['instance_id'],
                 'maxTraffic' => (float) $row['max_traffic'],

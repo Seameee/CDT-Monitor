@@ -52,6 +52,35 @@ class ConfigManager
         return !empty($this->configCache['admin_password']);
     }
 
+    /**
+     * 验证管理员密码（支持明文迁移到哈希）
+     */
+    public function verifyAdminPassword($password)
+    {
+        $stored = $this->configCache['admin_password'] ?? '';
+        if (empty($stored)) return false;
+
+        // 若存储的是明文（旧版本兼容）
+        if (!password_get_info($stored)['algo']) {
+            // 明文匹配时自动升级为哈希
+            if (hash_equals($stored, (string)$password)) {
+                $this->saveSetting('admin_password', password_hash($password, PASSWORD_DEFAULT));
+                return true;
+            }
+            return false;
+        }
+
+        return password_verify((string)$password, $stored);
+    }
+
+    /**
+     * 获取 Cron Key（用于 monitor.php 鉴权）
+     */
+    public function getCronKey()
+    {
+        return $this->configCache['cron_key'] ?? '';
+    }
+
     private function saveSetting($key, $value)
     {
         $stmt = $this->db->prepare("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)");
@@ -79,7 +108,18 @@ class ConfigManager
             $this->db->beginTransaction();
 
             // 1. 保存全局设置
-            $this->saveSetting('admin_password', $data['admin_password']);
+            // 密码若为新明文则进行哈希，若已是哈希则保留
+            $rawPass = $data['admin_password'] ?? '';
+            if (!empty($rawPass) && !password_get_info($rawPass)['algo']) {
+                $this->saveSetting('admin_password', password_hash($rawPass, PASSWORD_DEFAULT));
+            } elseif (!empty($rawPass)) {
+                $this->saveSetting('admin_password', $rawPass);
+            }
+
+            // 生成独立的 Cron Key（若不存在且正在初始化）
+            if (!$this->isInitialized() || empty($this->get('cron_key'))) {
+                $this->saveSetting('cron_key', bin2hex(random_bytes(16)));
+            }
             $this->saveSetting('traffic_threshold', $data['traffic_threshold']);
             $this->saveSetting('enable_schedule_email', $data['enable_schedule_email'] ? '1' : '0');
             $this->saveSetting('shutdown_mode', $data['shutdown_mode']);

@@ -221,6 +221,52 @@ class NotificationService
         }
     }
 
+    /**
+     * SSRF 防护：验证 URL 是否安全
+     */
+    private function isSafeUrl($url)
+    {
+        if (empty($url)) return false;
+        $parsed = parse_url($url);
+        if (!$parsed || !isset($parsed['host'])) return false;
+
+        $host = strtolower($parsed['host']);
+
+        // 禁止 localhost 和 IPv4/IPv6 回环
+        if ($host === 'localhost' || $host === '127.0.0.1' || $host === '::1' || $host === '0.0.0.0')
+            return false;
+
+        // 禁止内网域名和云厂商元数据服务
+        $blockedHosts = [
+            '169.254.169.254', // AWS/阿里云/腾讯云元数据
+            'metadata.google.internal',
+            'instance-data',
+        ];
+        foreach ($blockedHosts as $blocked) {
+            if (strpos($host, $blocked) !== false) return false;
+        }
+
+        // 禁止私有 IPv4 网段
+        if (filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+            // 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 127.0.0.0/8, 169.254.0.0/16
+            if (preg_match('/^(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.|127\.|169\.254\.)/', $host))
+                return false;
+        }
+
+        // 禁止私有 IPv6 网段
+        if (filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) {
+            if (preg_match('/^(fc00:|fd00:|fe80:|::1$)/i', $host))
+                return false;
+        }
+
+        // 禁止非 http/https 协议
+        $scheme = strtolower($parsed['scheme'] ?? 'http');
+        if (!in_array($scheme, ['http', 'https']))
+            return false;
+
+        return true;
+    }
+
     private function sendTelegram($text, $overrideConfig = null)
     {
         $token = $overrideConfig['token'] ?? $this->config['notify_tg_token'] ?? '';
@@ -234,6 +280,11 @@ class NotificationService
         if ($proxyType === 'custom' && !empty($overrideConfig['proxy_url'] ?? $this->config['notify_tg_proxy_url'] ?? '')) {
             $baseUrl = rtrim($overrideConfig['proxy_url'] ?? $this->config['notify_tg_proxy_url'], '/');
             $url = "{$baseUrl}/bot{$token}/sendMessage";
+        }
+
+        // SSRF 防护
+        if (!$this->isSafeUrl($url)) {
+            return "SSRF 防护：不安全的 URL";
         }
 
         $postFields = [
@@ -284,6 +335,11 @@ class NotificationService
 
         if (empty($url))
             return "Webhook URL为空";
+
+        // SSRF 防护
+        if (!$this->isSafeUrl($url)) {
+            return "SSRF 防护：不安全的 Webhook URL";
+        }
 
         // Parse variables
         $traffic = 'N/A';

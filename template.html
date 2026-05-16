@@ -1107,6 +1107,32 @@
                     Accounts: []
                 });
 
+                const csrfToken = ref('');
+
+                const fetchCsrfToken = async () => {
+                    try {
+                        const res = await fetch('index.php?action=get_csrf_token');
+                        if (res.ok) {
+                            const data = await res.json();
+                            if (data.csrf_token) {
+                                csrfToken.value = data.csrf_token;
+                            }
+                        }
+                    } catch (e) {
+                        console.error('Failed to fetch CSRF token', e);
+                    }
+                };
+
+                const apiPost = async (action, body = {}) => {
+                    const payload = { ...body, csrf_token: csrfToken.value };
+                    const res = await fetch('index.php?action=' + action, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+                    return res;
+                };
+
                 const checkInitStatus = async () => {
                     loadingCheckInit.value = true;
                     try {
@@ -1137,13 +1163,11 @@
 
                 const performSetup = async () => {
                     try {
-                        const res = await fetch('index.php?action=setup', {
-                            method: 'POST',
-                            body: JSON.stringify(setupData.value)
-                        });
+                        const res = await apiPost('setup', setupData.value);
                         const data = await res.json();
                         if (data.success) {
                             alert('系统初始化成功！');
+                            await fetchCsrfToken();
                             location.reload();
                         } else {
                             alert('初始化失败: ' + (data.message || '未知错误'));
@@ -1160,6 +1184,7 @@
                         const data = await res.json();
                         if (data.logged_in) {
                             isAdmin.value = true;
+                            await fetchCsrfToken();
                             fetchConfig();
                             startLogPolling(); // 登录后开始轮询日志
                         }
@@ -1200,10 +1225,7 @@
                 const refreshSingle = async (id, index) => {
                     refreshingMap.value[index] = true;
                     try {
-                        const res = await fetch('index.php?action=refresh_account', {
-                            method: 'POST',
-                            body: JSON.stringify({ id: id })
-                        });
+                        const res = await apiPost('refresh_account', { id: id });
                         const data = await res.json();
                         if (data.success) {
                             await fetchData();
@@ -1227,16 +1249,7 @@
                     isOperatingMap.value[index] = true;
 
                     try {
-                        const res = await fetch('index.php?action=control_instance', {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json'
-                            },
-                            body: JSON.stringify({
-                                id: id,
-                                action: action
-                            })
-                        });
+                        const res = await apiPost('control_instance', { id: id, action: action });
 
                         const data = await res.json();
 
@@ -1435,15 +1448,13 @@
 
                 const performLogin = async () => {
                     try {
-                        const res = await fetch('index.php?action=login', {
-                            method: 'POST',
-                            body: JSON.stringify({ password: passwordInput.value })
-                        });
+                        const res = await apiPost('login', { password: passwordInput.value });
                         const data = await res.json();
                         if (data.success) {
                             isAdmin.value = true;
                             showLoginModal.value = false;
                             passwordInput.value = '';
+                            await fetchCsrfToken();
                             fetchConfig();
                             startLogPolling();
                         } else {
@@ -1495,7 +1506,7 @@
                 const saveConfig = async () => {
                     if (!config.value) return;
                     try {
-                        const res = await fetch('index.php?action=save_config', { method: 'POST', body: JSON.stringify(config.value) });
+                        const res = await apiPost('save_config', config.value);
                         const data = await res.json();
                         if (data.success) { alert('配置已保存'); fetchData(); } else { alert('保存失败'); }
                     } catch (e) { alert('保存请求失败'); }
@@ -1517,10 +1528,7 @@
                 const clearLogs = async () => {
                     if (!confirm(`确定清空"${currentLogTab.value === 'action' ? '动作' : '心跳'}"日志吗？`)) return;
                     try {
-                        const res = await fetch('index.php?action=clear_logs', {
-                            method: 'POST',
-                            body: JSON.stringify({ tab: currentLogTab.value })
-                        });
+                        const res = await apiPost('clear_logs', { tab: currentLogTab.value });
                         const data = await res.json();
                         if (data.success) {
                             fetchLogs();
@@ -1548,7 +1556,7 @@
                     if (!confirm('发送测试邮件将使用已保存的配置。继续发送吗？')) { return; }
                     sendingEmail.value = true;
                     try {
-                        const res = await fetch('index.php?action=send_test_email', { method: 'POST', body: JSON.stringify({ email: config.value.Notification.email }) });
+                        const res = await apiPost('send_test_email', { email: config.value.Notification.email });
                         const data = await res.json();
                         if (data.success) { alert('邮件发送成功！'); } else { alert('邮件发送失败: ' + data.message); }
                     } catch (e) { alert('发送请求失败'); } finally { sendingEmail.value = false; }
@@ -1558,7 +1566,7 @@
                     if (!config.value || !config.value.Notification.telegram.token || !config.value.Notification.telegram.chat_id) { alert('请先填写Token和Chat ID，建议保存后再测试'); return; }
                     testingTelegram.value = true;
                     try {
-                        const res = await fetch('index.php?action=send_test_telegram', { method: 'POST', body: JSON.stringify({ telegram: config.value.Notification.telegram }) });
+                        const res = await apiPost('send_test_telegram', { telegram: config.value.Notification.telegram });
                         const data = await res.json();
                         if (data.success) { alert('Telegram 测试消息发送成功！'); } else { alert('发送失败: ' + data.message); }
                     } catch (e) { alert('发送请求失败'); } finally { testingTelegram.value = false; }
@@ -1568,7 +1576,7 @@
                     if (!config.value || !config.value.Notification.webhook.url) { alert('请先填写Webhook URL，建议保存后再测试'); return; }
                     testingWebhook.value = true;
                     try {
-                        const res = await fetch('index.php?action=send_test_webhook', { method: 'POST', body: JSON.stringify({ webhook: config.value.Notification.webhook }) });
+                        const res = await apiPost('send_test_webhook', { webhook: config.value.Notification.webhook });
                         const data = await res.json();
                         if (data.success) { alert('Webhook 测试消息发送成功！'); } else { alert('发送失败: ' + data.message); }
                     } catch (e) { alert('发送请求失败'); } finally { testingWebhook.value = false; }
@@ -1602,7 +1610,8 @@
                     toggleInstance,
                     toggleAdmin, performLogin, saveConfig, sendTestEmail, sendingEmail, addAccount, removeAccount, getInstanceStatusColor, performSetup, refreshSingle, fetchLogs,
                     currentLogTab, clearLogs, logAutoRefresh,
-                    currentNotifyTab, testingTelegram, testingWebhook, sendTestTelegram, sendTestWebhook
+                    currentNotifyTab, testingTelegram, testingWebhook, sendTestTelegram, sendTestWebhook,
+                    csrfToken, fetchCsrfToken
                 };
             }
         }).mount('#app');

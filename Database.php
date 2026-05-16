@@ -71,8 +71,7 @@ class Database
 
     private function throwPermissionError($dir)
     {
-        $user = get_current_user();
-        throw new Exception("权限不足：Web用户 ({$user}) 无法读写 {$dir}。<br>请修复权限：<code>chown -R {$user}:{$user} " . __DIR__ . "</code>");
+        throw new Exception("权限不足：无法读写数据目录。请检查目录权限。");
     }
 
     private function initSchema()
@@ -101,6 +100,14 @@ class Database
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             ip TEXT,
             attempt_time INTEGER
+        )");
+
+        // 新增：API 速率限制表
+        $this->pdo->exec("CREATE TABLE IF NOT EXISTS api_rate_limit (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ip TEXT,
+            action TEXT,
+            request_time INTEGER
         )");
 
         // 1. 小时级表 (24小时折线图)
@@ -323,7 +330,27 @@ class Database
         $this->pdo->exec("VACUUM");
     }
 
-    // --- 登录频率限制相关方法 ---
+    // --- 接口速率限制 ---
+
+    public function recordApiRequest($ip, $action)
+    {
+        $stmt = $this->pdo->prepare("INSERT INTO api_rate_limit (ip, action, request_time) VALUES (?, ?, ?)");
+        $stmt->execute([$ip, $action, time()]);
+    }
+
+    public function getRecentApiRequests($ip, $action, $windowSeconds)
+    {
+        $stmt = $this->pdo->prepare("SELECT COUNT(*) FROM api_rate_limit WHERE ip = ? AND action = ? AND request_time > ?");
+        $stmt->execute([$ip, $action, time() - $windowSeconds]);
+        return (int) $stmt->fetchColumn();
+    }
+
+    public function pruneApiRateLimit()
+    {
+        $limit = time() - 86400; // 保留24小时
+        $stmt = $this->pdo->prepare("DELETE FROM api_rate_limit WHERE request_time < ?");
+        $stmt->execute([$limit]);
+    }
 
     public function recordLoginAttempt($ip)
     {
@@ -379,10 +406,12 @@ class Database
     public function pruneStats()
     {
         $hourLimit = time() - (48 * 3600);
-        $this->pdo->exec("DELETE FROM traffic_hourly WHERE recorded_at < $hourLimit");
+        $stmt = $this->pdo->prepare("DELETE FROM traffic_hourly WHERE recorded_at < ?");
+        $stmt->execute([$hourLimit]);
 
         $dayLimit = time() - (60 * 86400);
-        $this->pdo->exec("DELETE FROM traffic_daily WHERE recorded_at < $dayLimit");
+        $stmt = $this->pdo->prepare("DELETE FROM traffic_daily WHERE recorded_at < ?");
+        $stmt->execute([$dayLimit]);
     }
 
     // --- 账单缓存相关方法 ---
@@ -419,6 +448,7 @@ class Database
     public function pruneBillingCache()
     {
         $limit = time() - (90 * 86400);
-        $this->pdo->exec("DELETE FROM billing_cache WHERE updated_at < $limit");
+        $stmt = $this->pdo->prepare("DELETE FROM billing_cache WHERE updated_at < ?");
+        $stmt->execute([$limit]);
     }
 }

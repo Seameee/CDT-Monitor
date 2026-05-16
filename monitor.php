@@ -8,13 +8,13 @@ header('Content-Type: text/plain; charset=utf-8');
 
 $app = new AliyunTrafficCheck();
 
-// CLI 模式直接运行，Web 模式需要密码
+// CLI 模式直接运行，Web 模式需要 Cron Key
 $isCli = (PHP_SAPI === 'cli');
 
 if (!$isCli) {
     $inputKey = $_GET['key'] ?? '';
-    $adminPassword = $app->getAdminPassword();
-    if ($inputKey !== $adminPassword) {
+    $cronKey = $app->getCronKey();
+    if (empty($cronKey) || !hash_equals($cronKey, $inputKey)) {
         http_response_code(403);
         echo "Access Denied.";
         exit;
