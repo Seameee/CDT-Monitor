@@ -108,15 +108,16 @@ class ConfigManager
             $this->db->beginTransaction();
 
             // 1. 保存全局设置
-            // 密码若为新明文则进行哈希，若已是哈希则保留
+            // 密码若为新明文则进行哈希，若已是哈希则保留，若为空则保留原值
             $rawPass = $data['admin_password'] ?? '';
             if (!empty($rawPass) && !password_get_info($rawPass)['algo']) {
                 $this->saveSetting('admin_password', password_hash($rawPass, PASSWORD_DEFAULT));
             } elseif (!empty($rawPass)) {
                 $this->saveSetting('admin_password', $rawPass);
             }
+            // 如果密码为空字符串，保留原值（不执行 saveSetting）
 
-            // 生成独立的 Cron Key（若不存在且正在初始化）
+            // 生成独立的 Cron Key（若不存在）
             if (!$this->isInitialized() || empty($this->get('cron_key'))) {
                 $this->saveSetting('cron_key', bin2hex(random_bytes(16)));
             }
@@ -135,21 +136,33 @@ class ConfigManager
                 $this->saveSetting('notify_host', $data['Notification']['host'] ?? '');
                 $this->saveSetting('notify_port', $data['Notification']['port'] ?? 465);
                 $this->saveSetting('notify_username', $data['Notification']['username'] ?? '');
-                $this->saveSetting('notify_password', $data['Notification']['password'] ?? '');
+                // 通知密码：仅当传入非空值时才更新
+                $notifyPassword = $data['Notification']['password'] ?? '';
+                if (!empty($notifyPassword)) {
+                    $this->saveSetting('notify_password', $notifyPassword);
+                }
                 $this->saveSetting('notify_secure', $data['Notification']['secure'] ?? 'ssl');
 
                 // Telegram
                 if (isset($data['Notification']['telegram'])) {
                     $tg = $data['Notification']['telegram'];
                     $this->saveSetting('notify_tg_enabled', isset($tg['enabled']) && $tg['enabled'] ? '1' : '0');
-                    $this->saveSetting('notify_tg_token', $tg['token'] ?? '');
+                    // Token：仅当传入非空值时才更新
+                    $tgToken = $tg['token'] ?? '';
+                    if (!empty($tgToken)) {
+                        $this->saveSetting('notify_tg_token', $tgToken);
+                    }
                     $this->saveSetting('notify_tg_chat_id', $tg['chat_id'] ?? '');
                     $this->saveSetting('notify_tg_proxy_type', $tg['proxy_type'] ?? 'none');
                     $this->saveSetting('notify_tg_proxy_url', $tg['proxy_url'] ?? '');
                     $this->saveSetting('notify_tg_proxy_ip', $tg['proxy_ip'] ?? '');
                     $this->saveSetting('notify_tg_proxy_port', $tg['proxy_port'] ?? '');
                     $this->saveSetting('notify_tg_proxy_user', $tg['proxy_user'] ?? '');
-                    $this->saveSetting('notify_tg_proxy_pass', $tg['proxy_pass'] ?? '');
+                    // 代理密码：仅当传入非空值时才更新
+                    $tgProxyPass = $tg['proxy_pass'] ?? '';
+                    if (!empty($tgProxyPass)) {
+                        $this->saveSetting('notify_tg_proxy_pass', $tgProxyPass);
+                    }
                 }
 
                 // Webhook
@@ -184,8 +197,19 @@ class ConfigManager
                 $instance = $acc['instanceId'] ?? '';
                 $compositeKey = $key . '|' . $region . '|' . $instance;
 
+                // 准备更新参数
+                $accessKeySecret = $acc['AccessKeySecret'] ?? '';
+                
+                // 如果是更新已有账号且传入的密钥为空，保留原值
+                if (isset($existingMap[$compositeKey]) && empty($accessKeySecret)) {
+                    $account = $this->getAccountById($existingMap[$compositeKey]);
+                    if ($account && !empty($account['access_key_secret'])) {
+                        $accessKeySecret = $account['access_key_secret'];
+                    }
+                }
+
                 $params = [
-                    $acc['AccessKeySecret'],
+                    $accessKeySecret,
                     $region,
                     $instance,
                     $acc['maxTraffic'],
@@ -205,13 +229,8 @@ class ConfigManager
                     $insertParams = [$key];
                     array_push($insertParams, ...$params);
                     $insertStmt->execute($insertParams);
-                    // For new inserts, we need to track the ID to avoid deleting it if user sends duplicate valid entries in one request? 
-                    // But assume frontend sends unique list. If not, this logic might add duplicates. 
-                    // Ideally we should track inserted IDs too but here we just rely on existingMap keys.
-                    // Actually, if we just inserted, we can't easily get the ID back without lastInsertId but we don't strictly need it for the delete logic below if we assume input list is unique.
-                    // However, to be safe against deleting effectively "new" accounts just added, let's just trust input list defines the "desired state".
-                    // Wait, $idsToDelete is calculated from existingMap vs keptIds. If it's a new insert, it wasn't in existingMap, so it won't be in idsToDelete anyway.
                 }
+            }
             }
 
             // 3. 删除移除的账号
