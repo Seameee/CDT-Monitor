@@ -231,7 +231,6 @@ class ConfigManager
                     $insertStmt->execute($insertParams);
                 }
             }
-            }
 
             // 3. 删除移除的账号
             $idsToDelete = array_diff(array_values($existingMap), $keptIds);
