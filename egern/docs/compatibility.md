@@ -1,0 +1,170 @@
+# Egern 宿主能力与兼容性记录
+
+> **当前状态：尚未进行任何 Egern / iOS 实机验证。**
+> 本文件记录哪些能力来自官方文档（可依赖）、哪些属于未证实的假设（必须实测），
+> 以及每项在未证实时本项目采取的降级方案。
+>
+> 记录日期：2026-10-08。平台依据：Egern 官网文档（JavaScript API、Scripting、
+> Widgets、Modules、Environment Variables、URL Scheme）与阿里云官方生成 SDK。
+>
+> **本文件中所有标为「待实机验证」的项目都没有通过真机测试。**
+> 不得把本文件当作实测报告，也不得据此外推未验证行为。
+
+---
+
+## 1. 能力矩阵
+
+| 能力 | 依据 | 状态 | 本项目的处理 |
+| --- | --- | --- | --- |
+| `export default async function(ctx)` | 官方文档 | 官方契约 | 全部入口使用 |
+| `ctx.env` 字符串键值对 | 官方文档 | 官方契约 | 严格解析；不使用 `Boolean("false")` |
+| `ctx.http.get/post` + `headers/body/timeout/redirect/credentials` | 官方文档 | 官方契约 | 只发主动 POST/GET；显式传 `credentials:"omit"` |
+| `ctx.storage.get/set/getJSON/setJSON/delete`（同步） | 官方文档 | 官方契约 | 全部缓存与事件去重都走它 |
+| `ctx.notify({title,body,sound,action})` | 官方文档 | 官方契约 | 仅 schedule 入口发送 |
+| `ctx.widgetFamily`（7 个取值） | 官方文档 | 官方契约 | 7 个 family 各自布局 + 未知值降级 |
+| `ctx.cron` | 官方文档 | 官方契约 | 仅用于记录，不用于时间判断 |
+| `ctx.app.version` / `ctx.app.language` | 官方文档 | 官方契约 | 仅用于脱敏诊断 |
+| Widget DSL 节点 `widget/stack/text/image/spacer/date` | 官方文档 | 官方契约 | 只使用这 6 种节点 |
+| `refreshAfter` 为 ISO 8601 未来时间 | 官方文档 | 官方契约 | 始终写入严格未来时间 |
+| 内联 SVG `data:image/svg+xml,` + 512KB 上限 | 官方文档 | 官方契约 | 本地生成；自设 64KB 上限 |
+| env 优先级 Module > Widget > Script | 官方文档 | 官方契约 | 视图变量只放 widget env |
+| `compat_arguments` 的 `{{{KEY}}}` 文本替换 | 官方文档 | 官方契约 | 仅用于 `MODULE_ID` 名称前缀 |
+| `env_schema` 仅 `name/description/default_value/options` | 官方文档 | 官方契约 | 校验脚本强制检查；default 与代码默认值一致 |
+| **`ctx.storage` 跨执行/跨上下文共享** | 文档未承诺 | **待实机验证** | 见 §2 |
+| **`ctx.storage` 事务/CAS/TTL/枚举** | 文档未提供 | **确认不存在** | 不使用；改为按已知 key 集合管理 |
+| **安全随机数（`crypto.getRandomValues`）** | 文档未提供 | **待实机验证** | 运行时探测；缺失时降级并如实标注 |
+| `TextEncoder` / `btoa` / `atob` | 文档未提供 | **待实机验证** | **完全不依赖**：自行实现 UTF-8/Base64/SHA-1 |
+| 全局 `fetch` | 文档未提供 | **待实机验证** | **不使用**；只用 `ctx.http` |
+| 跨文件 `import`（运行时） | 文档未提供 | **待实机验证** | 构建期打包成单文件，运行时不依赖 |
+| `ctx.confirm` / `ctx.source` / `scripts/run` | 文档未提供 | **确认不存在** | 不调用；控制确认改用一次性意图 |
+| `Intl.DateTimeFormat` 任意时区 | 文档未提供 | **待实机验证** | 运行时探测；失败时降级到固定 +08:00 或停用本地定时 |
+| Node `require/fs/Buffer/process` | 文档未提供 | **确认不存在** | 不依赖；`check:bundles` 静态禁止 |
+| Surge/Loon/QX/Scriptable 的 `$httpClient`/`$done`/`ListWidget` | 非 Egern API | **明确不是契约** | 不使用；`check:bundles` 静态禁止 |
+| ECMAScript 语法版本（target `es2020`） | 文档未提供 | **待实机验证** | 保守 target；transpile 无法补足缺失的宿主 API |
+
+---
+
+## 2. 缓存共享：默认按「不共享」设计（关键降级）
+
+官方文档**没有**说明以下任意一项：
+
+1. 不同 `generic` / `schedule` / `script.name` / module / profile 之间是否共享 storage；
+2. widget 扩展与主 App 之间是否共享；
+3. 多 widget 并发刷新时的写入竞争、持久化时机与 iCloud 同步行为。
+
+**因此本项目默认按「不共享」实现**：
+
+- `cdt-widget.js` 自己完成「读本上下文缓存 → 必要时只读采集 → 渲染」。
+  它**不会**等待某个 `schedule` 写下的 key。缓存未命中就自己发一次只读请求。
+- `cdt-refresh.js` 只负责自己的采集、通知与历史写入，不假设 widget 能读到。
+- 缓存读写都带 `namespace` + `provider` + 配置指纹校验，读到其它身份的数据一律当未命中。
+
+即使用户设备上确实共享，也不会出错（只是多一次请求）；反之若假设共享而实际不共享，
+widget 会永久空白。该降级方向是刻意选择的。
+
+**实机验证步骤（待执行）**：
+
+1. 装两份 module（不同 `MODULE_ID`）、两个 widget 指向不同脚本；
+2. 在 A 脚本 `set` 一个 key，在 B 脚本 `get` 同一 key，记录是否命中；
+3. 在 widget 与主 App 之间重复；
+4. 触发两个 widget 同时刷新，观察是否出现写入丢失或旧值覆盖；
+5. 结果记入本文件并据此决定是否启用共享缓存路径。
+
+---
+
+## 3. 控制能力：默认关闭（关键降级）
+
+本地实例启停需要同时满足两个**必须在真机证明**的前提（见 `src/services/control.ts`）：
+
+| 前提 | 含义 | 当前状态 |
+| --- | --- | --- |
+| `crossExecutionIntentClaim` | 一次性意图的「已消费」标记能可靠跨执行持久化 | **未证明 → false** |
+| `hostSerializesSameTarget` | 宿主能可靠串行执行同一目标的脚本，或云端动作幂等 | **未证明 → false** |
+
+由于两者默认 `false`，**本地控制路径不会执行任何云写操作**：
+
+- `cdt-control.js` 只校验意图、给出拒绝原因，并渲染控制台入口；
+- `cdt-automation.js` 只评估策略、发送通知，并记录每个被扣下的动作；
+- 两个模块的脚本在 `modules/cdt-monitor-control.yaml` 中 **`disabled: true`**。
+
+**明确不成立的说法**：本项目**不**声称「读后写标记」能提供 exactly-once，
+**不**声称本地 KV 提供事务或强一致，也**不**声称 `refreshAfter` 能保证按时唤醒。
+
+**实机验证步骤（待执行）**：
+
+1. 记录一次写入的 nonce，强退 App 后重新运行，确认能否读到（跨执行持久化）；
+2. 连续触发同一目标的两次运行，观察是否可能并发进入（宿主串行性）；
+3. 用**非生产**实例做一次真实启停，确认 `DescribeInstanceStatus` 能确认最终状态；
+4. 只有 1 与 2 都成立，才把对应 flag 改为 true 并重新构建。
+
+---
+
+## 4. 定时与时区行为（待实机验证）
+
+| 问题 | 状态 | 本项目的处理 |
+| --- | --- | --- |
+| cron 使用哪个时区 | 待实机验证 | **不依赖**：把 cron 当作「触发器」，在代码内按配置时区判断是否到点 |
+| 漏执行是否补跑 | 待实机验证 | 只保留 10 分钟（启停）/ 20 分钟（日报）短补偿窗，过窗不补 |
+| 锁屏 / 低电量 / 后台 / 强退 / 重启后的行为 | 待实机验证 | 采集结果只是「尝试过」，UI 显示真实采样年龄而非「实时」 |
+| `Intl` 是否支持 IANA 时区 | 待实机验证 | 运行时探测（`src/domain/timezone.ts`） |
+| `refreshAfter` 的实际效果 | 待实机验证 | 只作为「意图」写入，不承诺刷新时间 |
+
+**时区降级策略**：探测不到可用的 `Intl` 时，
+
+- `Asia/Shanghai` 仍可精确处理（自 1991 年起固定 UTC+8、无夏令时）；
+- 其他时区一律**停用本地定时与日报**并给出明确原因，绝不猜测偏移。
+
+---
+
+## 5. Widget 渲染（待实机验证）
+
+| 项目 | 状态 | 说明 |
+| --- | --- | --- |
+| 7 个 family 的实际布局 | 待实机验证 | 离线已保证产出合法 DSL；实际排版未测 |
+| `systemExtraLarge` | 待实机验证 | 仅 iPad 提供，**未持有对应设备** |
+| 深浅色自适应 | 待实机验证 | 使用 `{light,dark}` 自适应颜色，实际对比度未测 |
+| 内联 SVG 的渲染 | 待实机验证 | 遵循官方要求带 `xmlns`/`viewBox`，颜色用 `rgb()` 避免 `#` 截断 URI |
+| 系统大字体下的布局 | 待实机验证 | 使用语义字号 + `maxLines`/`minScale`，未实测 |
+| 长中文/英文名称 | 待实机验证 | 按**码点**截断，不会切开代理对 |
+| 手动运行（无 family） | 待实机验证 | 降级为简化 medium 布局，不抛异常 |
+
+**未验证设备**：`systemExtraLarge`（iPad）当前无设备可测，记录为未验证。
+
+---
+
+## 6. 签名与加密（离线已验证 / 宿主待验证）
+
+| 项目 | 状态 |
+| --- | --- |
+| RFC 3986 百分号编码（含 `!'()*` 与 `~`） | **离线已验证**（对照 Go 源码逐字节一致） |
+| SHA-1 / HMAC-SHA1 / Base64 / UTF-8 | **离线已验证**（RFC 2202 与标准向量） |
+| 阿里云官方签名固定向量（GET） | **离线已验证**：`9NaGiOspFP5UPcwX8Iwt2YJXXuk=` |
+| POST 对拍原 Go 实现 | **离线已验证**：`ZvQ9xGiFnquSJRvj+WE6kdSpTwU=` |
+| 宿主的随机数强度 | **待实机验证**：缺失时降级为「时间+计数+Math.random」，不视为加密安全 |
+| 真实账号的只读联调 | **未执行**（无授权账号） |
+
+---
+
+## 7. 阿里云接口（待核实项见 aliyun-api-contract.md）
+
+`ListCdtInternetTraffic` 的 `Traffic` **单位未在任何官方页面或 SDK 中声明**。
+本项目按字节处理并在 UI 上标注「接口累计（统计周期待确认）」，
+**不声称用量数值绝对准确**。
+
+完整待核实清单见 [aliyun-api-contract.md](aliyun-api-contract.md) 第 F 节。
+
+---
+
+## 8. 如何填写本文件
+
+实机测试后，请把对应行的「待实机验证」替换为：
+
+```
+状态：已验证（YYYY-MM-DD）
+环境：Egern <版本> / iOS <版本> / <设备型号>
+脚本：<入口文件名> @ <commit 或 sha256 前 12 位>
+结果：<观察到的事实>
+降级：<若与假设不符，实际启用的降级路径>
+```
+
+**不要**在没有真实测试的情况下把任何一行改为「已验证」。

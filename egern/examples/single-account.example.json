@@ -1,0 +1,46 @@
+{
+  "_comment": "CDT_ACCOUNTS_JSON 示例：单账号单实例。所有值均为脱敏假值，直接替换即可。设置本项后，简单模式的 CDT_ACCESS_KEY_* 字段会被忽略，以免同一账号被重复计数。",
+  "schemaVersion": 1,
+  "namespace": "personal",
+  "credentials": [
+    {
+      "id": "cred-main",
+      "accountId": "account-main",
+      "accessKeyId": "EXAMPLE_AK_ID",
+      "accessKeySecret": "EXAMPLE_SECRET",
+      "siteType": "international"
+    }
+  ],
+  "accounts": [
+    {
+      "id": "account-main",
+      "name": "阿里云主账号",
+      "aliyunUid": null
+    }
+  ],
+  "trafficScopes": [
+    {
+      "id": "main-overseas",
+      "accountId": "account-main",
+      "credentialId": "cred-main",
+      "trafficClass": "overseas",
+      "quota": { "value": 200, "unit": "GB", "source": "user" },
+      "thresholdPercent": 95,
+      "controlTargets": []
+    }
+  ],
+  "instances": [
+    {
+      "id": "hk-ecs",
+      "accountId": "account-main",
+      "credentialId": "cred-main",
+      "trafficScopeId": "main-overseas",
+      "regionId": "cn-hongkong",
+      "instanceId": "i-example0001",
+      "name": "香港实例",
+      "keepAlive": false,
+      "shutdownMode": "KeepCharging",
+      "schedule": { "enabled": false, "start": "08:00", "stop": "23:30" }
+    }
+  ]
+}

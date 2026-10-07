@@ -1,0 +1,81 @@
+name: Egern Plugin
+
+# Egern 专用检查：依赖锁定安装、类型检查、离线测试、模块校验、产物校验。
+# 只改 Egern 时不启动 Go 服务、Docker 或 Android 构建。
+on:
+  pull_request:
+    paths:
+      - 'egern/**'
+      - '.github/workflows/egern.yml'
+  push:
+    branches: [dev, main]
+    paths:
+      - 'egern/**'
+      - '.github/workflows/egern.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: egern
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+          cache: npm
+          cache-dependency-path: egern/package-lock.json
+
+      # 依赖锁定安装：package-lock.json 已提交（见根 .gitignore 的 !egern/... 例外）。
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Offline tests
+        run: npm test
+
+      # 构建必须早于产物校验，否则 check:modules / check:bundles 没有输入。
+      # 在 CI 中把发布地址固定到当前 commit，保证产物内不残留本地路径。
+      - name: Build bundles and modules
+        env:
+          CDT_RELEASE_REF: ${{ github.sha }}
+        run: npm run build
+
+      - name: Validate modules
+        run: npm run check:modules
+
+      - name: Validate bundles
+        run: npm run check:bundles
+
+      # 记录产物摘要，便于发布时对照与回滚。
+      - name: Record artifact hashes
+        run: |
+          echo "### Egern artifacts" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          cat dist/manifest.json >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: egern-dist
+          path: egern/dist/
+          if-no-files-found: error
+          retention-days: 14
+
+      # 确认没有任何秘密被写进产物（构建期不应接触用户凭据）。
+      - name: Ensure no credentials leaked into artifacts
+        run: |
+          if grep -rInE 'EXAMPLE_SECRET|CDT_ACCESS_KEY_SECRET *[:=] *"[^"]+' dist/ ; then
+            echo "::error::secret-like literal found in dist/"
+            exit 1
+          fi
+          echo "no credential literals found in dist/"

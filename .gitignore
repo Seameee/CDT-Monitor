@@ -16,6 +16,15 @@ package.json
 package-lock.json
 !web/package.json
 !web/package-lock.json
+# egern 子包：文件本身必须可提交，否则子包会存在但没被跟踪
+!egern/package.json
+!egern/package-lock.json
+egern/node_modules/
+# 本地凭据与临时测试输出
+egern/.env
+egern/**/*.local.json
+egern/.tmp-*
+egern/test-results/
 static/tailwindcss-browser.js
 web/node_modules
 web/dist

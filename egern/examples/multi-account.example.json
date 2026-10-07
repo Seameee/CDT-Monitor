@@ -1,0 +1,112 @@
+{
+  "_comment": "CDT_ACCOUNTS_JSON 示例：两个真实账号、三个流量范围、四个实例。演示重点是【额度与余额按账号/范围只计一次】：两个实例共享 main-overseas 时，用量与额度只出现一次；第二个账号使用独立凭据，不与其合并总计。所有值均为脱敏假值。",
+  "schemaVersion": 1,
+  "namespace": "personal",
+  "credentials": [
+    {
+      "id": "cred-a",
+      "accountId": "account-a",
+      "accessKeyId": "EXAMPLE_AK_A",
+      "accessKeySecret": "EXAMPLE_SECRET_A",
+      "siteType": "international"
+    },
+    {
+      "id": "cred-b-sub",
+      "accountId": "account-b",
+      "accessKeyId": "EXAMPLE_AK_B1",
+      "accessKeySecret": "EXAMPLE_SECRET_B1",
+      "siteType": "china"
+    },
+    {
+      "id": "cred-b-rotated",
+      "accountId": "account-b",
+      "accessKeyId": "EXAMPLE_AK_B2",
+      "accessKeySecret": "EXAMPLE_SECRET_B2",
+      "siteType": "china"
+    }
+  ],
+  "accounts": [
+    { "id": "account-a", "name": "主账号（国际站）", "aliyunUid": null },
+    { "id": "account-b", "name": "备用账号（中国站）", "aliyunUid": null }
+  ],
+  "trafficScopes": [
+    {
+      "id": "a-overseas",
+      "accountId": "account-a",
+      "credentialId": "cred-a",
+      "trafficClass": "overseas",
+      "quota": { "value": 200, "unit": "GB", "source": "user" },
+      "thresholdPercent": 95,
+      "controlTargets": []
+    },
+    {
+      "id": "a-mainland",
+      "accountId": "account-a",
+      "credentialId": "cred-a",
+      "trafficClass": "mainland",
+      "quota": { "value": 20, "unit": "GB", "source": "user" },
+      "thresholdPercent": 90,
+      "controlTargets": []
+    },
+    {
+      "id": "b-mainland",
+      "accountId": "account-b",
+      "credentialId": "cred-b-sub",
+      "trafficClass": "mainland",
+      "quota": { "value": 20, "unit": "GiB", "source": "user" },
+      "thresholdPercent": 95,
+      "controlTargets": []
+    }
+  ],
+  "instances": [
+    {
+      "id": "a-hk-1",
+      "accountId": "account-a",
+      "credentialId": "cred-a",
+      "trafficScopeId": "a-overseas",
+      "regionId": "cn-hongkong",
+      "instanceId": "i-example0001",
+      "name": "香港实例 A1",
+      "keepAlive": false,
+      "shutdownMode": "KeepCharging",
+      "schedule": { "enabled": false, "start": "08:00", "stop": "23:30" }
+    },
+    {
+      "id": "a-hk-2",
+      "accountId": "account-a",
+      "credentialId": "cred-a",
+      "trafficScopeId": "a-overseas",
+      "regionId": "cn-hongkong",
+      "instanceId": "i-example0002",
+      "name": "香港实例 A2（与 A1 共享海外额度）",
+      "keepAlive": false,
+      "shutdownMode": "KeepCharging",
+      "schedule": { "enabled": false, "start": "08:00", "stop": "23:30" }
+    },
+    {
+      "id": "a-sh-1",
+      "accountId": "account-a",
+      "credentialId": "cred-a",
+      "trafficScopeId": "a-mainland",
+      "regionId": "cn-shanghai",
+      "instanceId": "i-example0003",
+      "name": "上海实例",
+      "keepAlive": false,
+      "shutdownMode": "KeepCharging",
+      "schedule": { "enabled": false, "start": "08:00", "stop": "23:30" }
+    },
+    {
+      "_comment": "同一账号的第二个 AK（轮换中）显式归到 account-b，因此余额只统计一次。",
+      "id": "b-bj-1",
+      "accountId": "account-b",
+      "credentialId": "cred-b-rotated",
+      "trafficScopeId": "b-mainland",
+      "regionId": "cn-beijing",
+      "instanceId": "i-example0004",
+      "name": "北京实例（轮换凭据）",
+      "keepAlive": false,
+      "shutdownMode": "StopCharging",
+      "schedule": { "enabled": false, "start": "09:00", "stop": "22:00" }
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "name": "cdt-monitor-egern",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Egern script plugin and native iOS widget for Aliyun CDT traffic monitoring",
+  "license": "MIT",
+  "author": "青柠 (wang4386)",
+  "homepage": "https://github.com/wang4386/CDT-Monitor",
+  "engines": {
+    "node": ">=22.6"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node --test \"tests/**/*.test.ts\"",
+    "build": "node scripts/build.mjs",
+    "check:modules": "node scripts/validate-modules.mjs",
+    "check:bundles": "node scripts/check-bundles.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "esbuild": "^0.24.2",
+    "typescript": "^5.7.2",
+    "yaml": "^2.6.1"
+  }
+}

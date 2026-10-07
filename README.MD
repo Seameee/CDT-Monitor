@@ -197,6 +197,31 @@ GET /monitor.php?key=<具有 cron:run scope 的 API Key>
 
 仓库中的 [`android-widget`](android-widget/README.md) 是基于 `/api/v1/widget/summary` 的 Android 小组件原型，源码暂时随主项目保存，供后续研究和完善。当前不作为正式稳定客户端发布。
 
+### Egern 脚本插件与原生小组件
+
+仓库中的 [`egern/`](egern/README.md) 是 Egern 代理 App 的脚本插件：安装一个 YAML 模块后，
+可在 iOS 桌面与锁屏显示原生小组件，**默认无需自建服务器**。
+
+两种模式：
+
+| 模式 | 模块 | 数据来源 | 说明 |
+| --- | --- | --- | --- |
+| 直连 | `egern/dist/cdt-monitor.yaml` | 手机直接调用阿里云只读接口 | 默认方案；只需一份只读 RAM 凭据 |
+| 服务器 | `egern/dist/cdt-monitor-server.yaml` | 本项目的 Go 服务只读 API | 复用既有调度与历史；只需 `widget:read` Key |
+
+边界说明：
+
+- 小组件渲染、普通刷新与诊断**只读**，不会开关机；实例启停是独立且**默认关闭**的控制路径。
+- Go v1 接口的 `updated_at` 是入队时间而非云端采样时间，因此服务器模式的数据**不能**作为
+  自动控制的新鲜度依据。
+- `ListCdtInternetTraffic` 没有周期参数，官方也未声明返回值的单位；故界面标注
+  「接口累计（统计周期待确认）」，不声称是精确的本月用量。
+- Egern 的定时脚本只在系统给予执行机会时运行，**不保证**按时唤醒；要求准时停机请继续使用 Go 后端。
+
+详见 [`egern/README.md`](egern/README.md)、
+[接口契约](egern/docs/aliyun-api-contract.md) 与
+[兼容性记录](egern/docs/compatibility.md)（含尚未完成的实机验证清单）。
+
 ## 相关链接
 
 - 项目主页：[GitHub](https://github.com/wang4386/CDT-Monitor)

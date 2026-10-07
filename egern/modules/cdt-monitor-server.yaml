@@ -1,0 +1,83 @@
+name: "CDT Monitor（服务器模式）"
+description: "读取已有 CDT-Monitor Go 服务的只读快照；适合已经自建后端、希望复用其调度与历史的用户"
+author: "青柠 (wang4386)"
+homepage: "https://github.com/wang4386/CDT-Monitor"
+manual: "https://github.com/wang4386/CDT-Monitor/blob/main/egern/README.md"
+icon: "server.rack"
+
+compat_arguments:
+  MODULE_ID: "server"
+compat_arguments_desc: "同一 Profile 安装多份时设置不同的非秘密 MODULE_ID；仅字母、数字、下划线和连字符"
+
+env_schema:
+  CDT_BASE_URL:
+    name: "服务器地址"
+    description: "CDT-Monitor 服务的 HTTPS 基础地址，例如 https://cdt.example.com。可带反向代理子路径；不要包含用户名、密码、查询串或片段。"
+  CDT_READ_TOKEN:
+    name: "只读 API Key"
+    description: "在服务端「设置 → API Key」创建，只需要 widget:read 权限。Token 不会出现在 URL 中。"
+  CDT_ALLOW_INSECURE_HTTP:
+    name: "允许本机 HTTP 调试"
+    description: "仅在服务器运行于本机、且你明确接受明文传输 Token 时才开启。默认关闭。"
+    default_value: "false"
+    options: ["true", "false"]
+  CDT_NAME:
+    name: "显示名称"
+    default_value: "CDT"
+  CDT_QUOTA:
+    name: "本周期流量上限（可选）"
+    description: "留空时直接使用服务端返回的 flow_total 作为上限（按 GiB 换算，并标记为来自服务器）。只有当你希望自己定义上限时才填写。"
+  CDT_QUOTA_UNIT:
+    name: "上限单位"
+    description: "仅在你自行填写 CDT_QUOTA 时生效。服务端自带的 flow_total 一律按 GiB 换算为字节后比较阈值，与本项无关。"
+    default_value: "GB"
+    options: ["GB", "GiB"]
+  CDT_THRESHOLD_PERCENT:
+    name: "告警阈值(%)"
+    description: "取值 (0,100]。"
+    default_value: "95"
+  CDT_REFRESH_SECONDS:
+    name: "本地缓存秒数"
+    default_value: "900"
+  CDT_BILLING_ENABLED:
+    name: "显示余额和账单"
+    description: "只读取服务端已缓存的账单数据，不会触发新的账单查询。"
+    default_value: "false"
+    options: ["true", "false"]
+  CDT_LOCAL_NOTIFY:
+    name: "定时阈值通知"
+    default_value: "false"
+    options: ["true", "false"]
+  CDT_TIMEZONE:
+    name: "业务时区"
+    default_value: "Asia/Shanghai"
+
+scriptings:
+  # CDT_MODE 在脚本级 env 声明为 server：模块级 env 优先级最高，
+  # 因此这里使用脚本级默认值，避免覆盖用户在同一 Profile 的其他配置。
+  - generic:
+      name: "cdt-{{{MODULE_ID}}}-widget"
+      script_url: "@@RELEASE_BASE@@/cdt-widget.js"
+      timeout: 20
+      update_interval: 86400
+      env:
+        CDT_MODE: "server"
+  - generic:
+      name: "cdt-{{{MODULE_ID}}}-diagnostics"
+      script_url: "@@RELEASE_BASE@@/cdt-diagnostics.js"
+      timeout: 20
+      update_interval: 86400
+      env:
+        CDT_MODE: "server"
+  - schedule:
+      name: "cdt-{{{MODULE_ID}}}-refresh"
+      cron: "*/15 * * * *"
+      script_url: "@@RELEASE_BASE@@/cdt-refresh.js"
+      timeout: 30
+      update_interval: 86400
+      env:
+        CDT_MODE: "server"
+
+widgets:
+  - name: "CDT Monitor Server {{{MODULE_ID}}}"
+    script_name: "cdt-{{{MODULE_ID}}}-widget"

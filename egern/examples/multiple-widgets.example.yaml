@@ -1,0 +1,42 @@
+# 多个小组件视图示例（主配置片段）
+#
+# 说明：
+#   - 这份片段放在主配置里，**不是**模块文件。
+#   - 视图选择变量（CDT_SCOPE_ID / CDT_INSTANCE_IDS / CDT_THEME）必须写在
+#     widget 的 env 里；写进模块 env 会覆盖所有视图，这正是要避免的。
+#   - Module > Widget > Script 的优先级意味着：模块 env 会盖掉这里的设置。
+#     所以同一 Profile 里如果需要多个视图，请不要在模块引用处设置这些变量。
+#
+# 这里引用同一个模块两次会得到重复的脚本名，因此推荐做法是：
+#   只安装一份基础模块，然后在下面声明多个 widget，各自指向同一个 generic 脚本。
+
+modules:
+  - url: "https://raw.githubusercontent.com/Seameee/CDT-Monitor/main/egern/dist/cdt-monitor.yaml"
+    enabled: true
+    env:
+      CDT_ACCESS_KEY_ID: "EXAMPLE_AK_ID"
+      CDT_ACCESS_KEY_SECRET: "EXAMPLE_SECRET"
+      CDT_INSTANCE_ID: "i-example0001"
+      CDT_QUOTA: "200"
+      CDT_QUOTA_UNIT: "GB"
+      # 注意：这里**不要**设置 CDT_SCOPE_ID / CDT_THEME。
+
+widgets:
+  # 桌面小组件：完整视图（小/中/大由 iOS 尺寸决定，脚本按 family 自适应）
+  - name: "CDT 总览"
+    script_name: "cdt-main-widget"
+    env:
+      CDT_THEME: "auto"
+
+  # 纯海外流量的深色卡片
+  - name: "CDT 海外"
+    script_name: "cdt-main-widget"
+    env:
+      CDT_SCOPE_ID: "scope-main-overseas"
+      CDT_THEME: "dark"
+
+  # 锁屏单行：通常无需再设 env，accessoryInline 会自动精简
+  - name: "CDT 锁屏"
+    script_name: "cdt-main-widget"
+    env:
+      CDT_THEME: "auto"
