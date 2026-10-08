@@ -861,136 +861,6 @@ function validateControlIntent(intent, snapshot, config, now, alreadyConsumed) {
   return { ok: true, code: "OK", reason: "", instance };
 }
 
-// src/services/control.ts
-function capabilityFromConfig(config) {
-  const attestation = config.control.deviceVerification;
-  return {
-    crossExecutionIntentClaim: attestation.crossExecutionIntentClaim === true,
-    hostSerializesSameTarget: attestation.hostSerializesSameTarget === true
-  };
-}
-function isIntentConsumed(cache, nonce) {
-  return cache.read(nonce, "intent-consumed", (value) => value === true) === true;
-}
-async function executeControlIntent(options) {
-  const { intent, snapshot, config, cache, provider, capability, scope, now } = options;
-  if (!capability.crossExecutionIntentClaim || !capability.hostSerializesSameTarget) {
-    if (provider === null) {
-      return {
-        executed: false,
-        state: "failed",
-        code: "ControlUnavailable",
-        message: "本机未验证可安全执行本地控制，请使用云控制台或后端确认页面",
-        requiresStateCheck: false,
-        error: null
-      };
-    }
-    return {
-      executed: false,
-      state: "failed",
-      code: "CapabilityUnproven",
-      message: "尚未在真机验证“一次性意图跨执行持久化”与“同目标串行执行”，按契约本地控制保持关闭",
-      requiresStateCheck: false,
-      error: null
-    };
-  }
-  const validation = validateControlIntent(
-    intent,
-    snapshot,
-    config,
-    now,
-    isIntentConsumed(cache, intent.nonce)
-  );
-  if (!validation.ok || validation.instance === null) {
-    return {
-      executed: false,
-      state: "failed",
-      code: validation.code,
-      message: validation.reason,
-      requiresStateCheck: false,
-      error: null
-    };
-  }
-  const instanceSnapshot = validation.instance;
-  const instanceConfig = config.instances.find((item) => item.id === instanceSnapshot.id);
-  if (instanceConfig === void 0) {
-    return {
-      executed: false,
-      state: "failed",
-      code: "TargetMismatch",
-      message: "控制目标与当前配置不匹配",
-      requiresStateCheck: false,
-      error: null
-    };
-  }
-  const credential = config.credentials.find((item) => item.id === instanceConfig.credentialId);
-  if (credential === void 0 || provider === null) {
-    return {
-      executed: false,
-      state: "failed",
-      code: "MissingCredential",
-      message: "缺少可用的控制凭据",
-      requiresStateCheck: false,
-      error: null
-    };
-  }
-  cache.write(intent.nonce, "intent-consumed", true, now);
-  try {
-    if (intent.action === "start") {
-      await provider.startInstance(scope, instanceConfig, credential);
-    } else {
-      await provider.stopInstance(scope, instanceConfig, credential, intent.shutdownMode);
-    }
-    return {
-      executed: true,
-      state: "accepted",
-      code: "Accepted",
-      message: intent.action === "start" ? "启动指令已被云接口受理，正在启动中" : "停止指令已被云接口受理，正在停止中",
-      requiresStateCheck: true,
-      error: null
-    };
-  } catch (caught) {
-    const sanitized2 = toControlError(caught, now);
-    const uncertain = sanitized2.retryable || sanitized2.code === "NetworkError";
-    return {
-      executed: true,
-      state: uncertain ? "uncertain" : "failed",
-      code: sanitized2.code,
-      message: uncertain ? "控制请求结果不确定，请稍后查询实例状态后再决定" : sanitized2.message,
-      requiresStateCheck: true,
-      error: sanitized2
-    };
-  }
-}
-function toControlError(caught, now) {
-  if (caught !== null && typeof caught === "object" && "sanitized" in caught) {
-    return caught.sanitized;
-  }
-  return {
-    code: "UnexpectedError",
-    message: "控制请求发生了未预期的错误",
-    at: now.toISOString(),
-    retryable: false
-  };
-}
-function buildConsoleGuidance(config) {
-  const steps = [
-    "打开阿里云 ECS 控制台，进入「实例」列表",
-    "找到目标实例，确认当前状态与流量情况",
-    "在控制台完成启动或停止，并按需选择普通停机/节省停机"
-  ];
-  if (config.mode === "server" && config.server !== null) {
-    steps.push(`也可使用自建控制台：${config.server.baseUrl}`);
-  } else {
-    steps.push("停止模式说明：普通停机继续计费；节省停机可能释放计算资源与公网 IP");
-  }
-  return {
-    url: "https://ecs.console.aliyun.com/",
-    title: "通过云控制台执行实例操作",
-    steps
-  };
-}
-
 // src/host/crypto.ts
 var SHA1_BLOCK_BYTES = 64;
 var SHA1_DIGEST_BYTES = 20;
@@ -1189,6 +1059,136 @@ function percentEncode(value) {
     }
   }
   return out;
+}
+
+// src/services/control.ts
+function capabilityFromConfig(config) {
+  const attestation = config.control.deviceVerification;
+  return {
+    crossExecutionIntentClaim: attestation.crossExecutionIntentClaim === true,
+    hostSerializesSameTarget: attestation.hostSerializesSameTarget === true
+  };
+}
+function isIntentConsumed(cache, nonce) {
+  return cache.read(nonce, "intent-consumed", (value) => value === true) === true;
+}
+async function executeControlIntent(options) {
+  const { intent, snapshot, config, cache, provider, capability, scope, now } = options;
+  if (!capability.crossExecutionIntentClaim || !capability.hostSerializesSameTarget) {
+    if (provider === null) {
+      return {
+        executed: false,
+        state: "failed",
+        code: "ControlUnavailable",
+        message: "本机未验证可安全执行本地控制，请使用云控制台或后端确认页面",
+        requiresStateCheck: false,
+        error: null
+      };
+    }
+    return {
+      executed: false,
+      state: "failed",
+      code: "CapabilityUnproven",
+      message: "尚未在真机验证“一次性意图跨执行持久化”与“同目标串行执行”，按契约本地控制保持关闭",
+      requiresStateCheck: false,
+      error: null
+    };
+  }
+  const validation = validateControlIntent(
+    intent,
+    snapshot,
+    config,
+    now,
+    isIntentConsumed(cache, intent.nonce)
+  );
+  if (!validation.ok || validation.instance === null) {
+    return {
+      executed: false,
+      state: "failed",
+      code: validation.code,
+      message: validation.reason,
+      requiresStateCheck: false,
+      error: null
+    };
+  }
+  const instanceSnapshot = validation.instance;
+  const instanceConfig = config.instances.find((item) => item.id === instanceSnapshot.id);
+  if (instanceConfig === void 0) {
+    return {
+      executed: false,
+      state: "failed",
+      code: "TargetMismatch",
+      message: "控制目标与当前配置不匹配",
+      requiresStateCheck: false,
+      error: null
+    };
+  }
+  const credential = config.credentials.find((item) => item.id === instanceConfig.credentialId);
+  if (credential === void 0 || provider === null) {
+    return {
+      executed: false,
+      state: "failed",
+      code: "MissingCredential",
+      message: "缺少可用的控制凭据",
+      requiresStateCheck: false,
+      error: null
+    };
+  }
+  cache.write(intent.nonce, "intent-consumed", true, now);
+  try {
+    if (intent.action === "start") {
+      await provider.startInstance(scope, instanceConfig, credential);
+    } else {
+      await provider.stopInstance(scope, instanceConfig, credential, intent.shutdownMode);
+    }
+    return {
+      executed: true,
+      state: "accepted",
+      code: "Accepted",
+      message: intent.action === "start" ? "启动指令已被云接口受理，正在启动中" : "停止指令已被云接口受理，正在停止中",
+      requiresStateCheck: true,
+      error: null
+    };
+  } catch (caught) {
+    const sanitized2 = toControlError(caught, now);
+    const uncertain = sanitized2.retryable || sanitized2.code === "NetworkError";
+    return {
+      executed: true,
+      state: uncertain ? "uncertain" : "failed",
+      code: sanitized2.code,
+      message: uncertain ? "控制请求结果不确定，请稍后查询实例状态后再决定" : sanitized2.message,
+      requiresStateCheck: true,
+      error: sanitized2
+    };
+  }
+}
+function toControlError(caught, now) {
+  if (caught !== null && typeof caught === "object" && "sanitized" in caught) {
+    return caught.sanitized;
+  }
+  return {
+    code: "UnexpectedError",
+    message: "控制请求发生了未预期的错误",
+    at: now.toISOString(),
+    retryable: false
+  };
+}
+function buildConsoleGuidance(config) {
+  const steps = [
+    "打开阿里云 ECS 控制台，进入「实例」列表",
+    "找到目标实例，确认当前状态与流量情况",
+    "在控制台完成启动或停止，并按需选择普通停机/节省停机"
+  ];
+  if (config.mode === "server" && config.server !== null) {
+    steps.push(`也可使用自建控制台：${config.server.baseUrl}`);
+  } else {
+    steps.push("停止模式说明：普通停机继续计费；节省停机可能释放计算资源与公网 IP");
+  }
+  return {
+    url: "https://ecs.console.aliyun.com/",
+    title: "通过云控制台执行实例操作",
+    steps
+  };
 }
 
 // src/providers/cdt-server.ts

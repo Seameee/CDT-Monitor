@@ -1221,6 +1221,206 @@ function recordHistory(cache, scopeSnapshot, reading, now) {
   );
 }
 
+// src/host/crypto.ts
+var SHA1_BLOCK_BYTES = 64;
+var SHA1_DIGEST_BYTES = 20;
+function rotateLeft32(value, count) {
+  return (value << count | value >>> 32 - count) >>> 0;
+}
+function utf8Bytes(input) {
+  const out = [];
+  for (let i = 0; i < input.length; i++) {
+    let codePoint = input.charCodeAt(i);
+    if (codePoint >= 55296 && codePoint <= 56319) {
+      const next = i + 1 < input.length ? input.charCodeAt(i + 1) : 0;
+      if (next >= 56320 && next <= 57343) {
+        codePoint = (codePoint - 55296 << 10) + (next - 56320) + 65536;
+        i++;
+      } else {
+        codePoint = 65533;
+      }
+    } else if (codePoint >= 56320 && codePoint <= 57343) {
+      codePoint = 65533;
+    }
+    if (codePoint < 128) {
+      out.push(codePoint);
+    } else if (codePoint < 2048) {
+      out.push(192 | codePoint >> 6, 128 | codePoint & 63);
+    } else if (codePoint < 65536) {
+      out.push(
+        224 | codePoint >> 12,
+        128 | codePoint >> 6 & 63,
+        128 | codePoint & 63
+      );
+    } else {
+      out.push(
+        240 | codePoint >> 18,
+        128 | codePoint >> 12 & 63,
+        128 | codePoint >> 6 & 63,
+        128 | codePoint & 63
+      );
+    }
+  }
+  return out;
+}
+var BASE64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+function base64Encode(bytes) {
+  let out = "";
+  for (let i = 0; i < bytes.length; i += 3) {
+    const b0 = bytes[i] ?? 0;
+    const b1 = i + 1 < bytes.length ? bytes[i + 1] : void 0;
+    const b2 = i + 2 < bytes.length ? bytes[i + 2] : void 0;
+    out += BASE64_ALPHABET[b0 >> 2];
+    if (b1 === void 0) {
+      out += BASE64_ALPHABET[(b0 & 3) << 4];
+      out += "==";
+      break;
+    }
+    out += BASE64_ALPHABET[(b0 & 3) << 4 | b1 >> 4];
+    if (b2 === void 0) {
+      out += BASE64_ALPHABET[(b1 & 15) << 2];
+      out += "=";
+      break;
+    }
+    out += BASE64_ALPHABET[(b1 & 15) << 2 | b2 >> 6];
+    out += BASE64_ALPHABET[b2 & 63];
+  }
+  return out;
+}
+var BASE64_LOOKUP = (() => {
+  const table = {};
+  for (let i = 0; i < BASE64_ALPHABET.length; i++) {
+    table[BASE64_ALPHABET[i]] = i;
+  }
+  return table;
+})();
+function hexEncode(bytes) {
+  let out = "";
+  for (const byte of bytes) {
+    out += (byte < 16 ? "0" : "") + byte.toString(16);
+  }
+  return out;
+}
+function sha1(message) {
+  const messageLength = message.length;
+  const paddedLength = (() => {
+    const afterOne = messageLength + 1;
+    const remainder = afterOne % SHA1_BLOCK_BYTES;
+    const zeroPad = remainder <= 56 ? 56 - remainder : 56 + (SHA1_BLOCK_BYTES - remainder);
+    return afterOne + zeroPad + 8;
+  })();
+  const buffer = new Uint8Array(paddedLength);
+  buffer.set(message, 0);
+  buffer[messageLength] = 128;
+  const view = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+  const bitLengthHigh = Math.floor(messageLength / 536870912);
+  const bitLengthLow = messageLength % 536870912 * 8;
+  view.setUint32(paddedLength - 8, bitLengthHigh, false);
+  view.setUint32(paddedLength - 4, bitLengthLow >>> 0, false);
+  const h0Init = 1732584193;
+  const h1Init = 4023233417;
+  const h2Init = 2562383102;
+  const h3Init = 271733878;
+  const h4Init = 3285377520;
+  let h0 = h0Init;
+  let h1 = h1Init;
+  let h2 = h2Init;
+  let h3 = h3Init;
+  let h4 = h4Init;
+  const words = new Uint32Array(80);
+  for (let offset = 0; offset < paddedLength; offset += SHA1_BLOCK_BYTES) {
+    for (let i = 0; i < 16; i++) {
+      words[i] = view.getUint32(offset + i * 4, false);
+    }
+    for (let i = 16; i < 80; i++) {
+      words[i] = rotateLeft32(
+        words[i - 3] ^ words[i - 8] ^ words[i - 14] ^ words[i - 16],
+        1
+      );
+    }
+    let a = h0;
+    let b = h1;
+    let c = h2;
+    let d = h3;
+    let e = h4;
+    for (let i = 0; i < 80; i++) {
+      let f;
+      let k;
+      if (i < 20) {
+        f = b & c | ~b & d;
+        k = 1518500249;
+      } else if (i < 40) {
+        f = b ^ c ^ d;
+        k = 1859775393;
+      } else if (i < 60) {
+        f = b & c | b & d | c & d;
+        k = 2400959708;
+      } else {
+        f = b ^ c ^ d;
+        k = 3395469782;
+      }
+      const temp = rotateLeft32(a, 5) + f + e + k + words[i] >>> 0;
+      e = d;
+      d = c;
+      c = rotateLeft32(b, 30);
+      b = a;
+      a = temp;
+    }
+    h0 = h0 + a >>> 0;
+    h1 = h1 + b >>> 0;
+    h2 = h2 + c >>> 0;
+    h3 = h3 + d >>> 0;
+    h4 = h4 + e >>> 0;
+  }
+  const digest = new Uint8Array(SHA1_DIGEST_BYTES);
+  const digestView = new DataView(
+    digest.buffer,
+    digest.byteOffset,
+    digest.byteLength
+  );
+  digestView.setUint32(0, h0, false);
+  digestView.setUint32(4, h1, false);
+  digestView.setUint32(8, h2, false);
+  digestView.setUint32(12, h3, false);
+  digestView.setUint32(16, h4, false);
+  return Array.from(digest);
+}
+function hmacSha1(key, message) {
+  let normalizedKey = key;
+  if (normalizedKey.length > SHA1_BLOCK_BYTES) {
+    normalizedKey = sha1(normalizedKey);
+  }
+  const block = new Array(SHA1_BLOCK_BYTES).fill(0);
+  for (let i = 0; i < normalizedKey.length; i++) {
+    block[i] = normalizedKey[i];
+  }
+  const innerPad = block.map((byte) => byte ^ 54);
+  const outerPad = block.map((byte) => byte ^ 92);
+  const innerDigest = sha1(innerPad.concat(message));
+  return sha1(outerPad.concat(innerDigest));
+}
+var UNRESERVED = (() => {
+  const table = new Uint8Array(128);
+  const marks = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.~";
+  for (const ch of marks) {
+    table[ch.charCodeAt(0)] = 1;
+  }
+  return table;
+})();
+var HEX_UPPER = "0123456789ABCDEF";
+function percentEncode(value) {
+  const bytes = utf8Bytes(value);
+  let out = "";
+  for (const byte of bytes) {
+    if (byte < 128 && UNRESERVED[byte] === 1) {
+      out += String.fromCharCode(byte);
+    } else {
+      out += "%" + HEX_UPPER[byte >> 4 & 15] + HEX_UPPER[byte & 15];
+    }
+  }
+  return out;
+}
+
 // src/services/control.ts
 function capabilityFromConfig(config) {
   const attestation = config.control.deviceVerification;
@@ -1228,6 +1428,33 @@ function capabilityFromConfig(config) {
     crossExecutionIntentClaim: attestation.crossExecutionIntentClaim === true,
     hostSerializesSameTarget: attestation.hostSerializesSameTarget === true
   };
+}
+function controlFingerprint(config) {
+  const control = config.control;
+  const identity = JSON.stringify({
+    enabled: control.enabled,
+    credentialId: control.credentialId,
+    allowed: [...control.allowedInstanceIds].sort(),
+    attestation: {
+      cross: control.deviceVerification.crossExecutionIntentClaim,
+      serial: control.deviceVerification.hostSerializesSameTarget,
+      verifiedAt: control.deviceVerification.verifiedAt
+    },
+    instances: control.instances.map((policy) => ({
+      id: policy.instanceId,
+      keepAlive: policy.keepAlive,
+      schedule: policy.scheduleControlEnabled,
+      shutdown: policy.shutdownMode
+    })).sort((a, b) => a.id < b.id ? -1 : 1),
+    scopes: control.scopes.map((scope) => ({
+      id: scope.scopeId,
+      stop: scope.thresholdStopEnabled,
+      action: scope.thresholdAction
+    })).sort((a, b) => a.id < b.id ? -1 : 1),
+    cooldown: control.actionCooldownSeconds,
+    pauseUntil: control.pauseUntil
+  });
+  return hexEncode(sha1(utf8Bytes(identity))).slice(0, 12);
 }
 function isIntentConsumed(cache, nonce) {
   return cache.read(nonce, "intent-consumed", (value) => value === true) === true;
@@ -1484,6 +1711,7 @@ function writeRunLog(cache, entry, now) {
     {
       at: entry.at,
       mode: entry.mode,
+      controlFingerprint: entry.controlFingerprint,
       scopeCount: entry.scopeCount,
       instanceCount: entry.instanceCount,
       decisions: entry.decisions.slice(0, MAX_DECISIONS),
@@ -1492,206 +1720,6 @@ function writeRunLog(cache, entry, now) {
     },
     now
   );
-}
-
-// src/host/crypto.ts
-var SHA1_BLOCK_BYTES = 64;
-var SHA1_DIGEST_BYTES = 20;
-function rotateLeft32(value, count) {
-  return (value << count | value >>> 32 - count) >>> 0;
-}
-function utf8Bytes(input) {
-  const out = [];
-  for (let i = 0; i < input.length; i++) {
-    let codePoint = input.charCodeAt(i);
-    if (codePoint >= 55296 && codePoint <= 56319) {
-      const next = i + 1 < input.length ? input.charCodeAt(i + 1) : 0;
-      if (next >= 56320 && next <= 57343) {
-        codePoint = (codePoint - 55296 << 10) + (next - 56320) + 65536;
-        i++;
-      } else {
-        codePoint = 65533;
-      }
-    } else if (codePoint >= 56320 && codePoint <= 57343) {
-      codePoint = 65533;
-    }
-    if (codePoint < 128) {
-      out.push(codePoint);
-    } else if (codePoint < 2048) {
-      out.push(192 | codePoint >> 6, 128 | codePoint & 63);
-    } else if (codePoint < 65536) {
-      out.push(
-        224 | codePoint >> 12,
-        128 | codePoint >> 6 & 63,
-        128 | codePoint & 63
-      );
-    } else {
-      out.push(
-        240 | codePoint >> 18,
-        128 | codePoint >> 12 & 63,
-        128 | codePoint >> 6 & 63,
-        128 | codePoint & 63
-      );
-    }
-  }
-  return out;
-}
-var BASE64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-function base64Encode(bytes) {
-  let out = "";
-  for (let i = 0; i < bytes.length; i += 3) {
-    const b0 = bytes[i] ?? 0;
-    const b1 = i + 1 < bytes.length ? bytes[i + 1] : void 0;
-    const b2 = i + 2 < bytes.length ? bytes[i + 2] : void 0;
-    out += BASE64_ALPHABET[b0 >> 2];
-    if (b1 === void 0) {
-      out += BASE64_ALPHABET[(b0 & 3) << 4];
-      out += "==";
-      break;
-    }
-    out += BASE64_ALPHABET[(b0 & 3) << 4 | b1 >> 4];
-    if (b2 === void 0) {
-      out += BASE64_ALPHABET[(b1 & 15) << 2];
-      out += "=";
-      break;
-    }
-    out += BASE64_ALPHABET[(b1 & 15) << 2 | b2 >> 6];
-    out += BASE64_ALPHABET[b2 & 63];
-  }
-  return out;
-}
-var BASE64_LOOKUP = (() => {
-  const table = {};
-  for (let i = 0; i < BASE64_ALPHABET.length; i++) {
-    table[BASE64_ALPHABET[i]] = i;
-  }
-  return table;
-})();
-function hexEncode(bytes) {
-  let out = "";
-  for (const byte of bytes) {
-    out += (byte < 16 ? "0" : "") + byte.toString(16);
-  }
-  return out;
-}
-function sha1(message) {
-  const messageLength = message.length;
-  const paddedLength = (() => {
-    const afterOne = messageLength + 1;
-    const remainder = afterOne % SHA1_BLOCK_BYTES;
-    const zeroPad = remainder <= 56 ? 56 - remainder : 56 + (SHA1_BLOCK_BYTES - remainder);
-    return afterOne + zeroPad + 8;
-  })();
-  const buffer = new Uint8Array(paddedLength);
-  buffer.set(message, 0);
-  buffer[messageLength] = 128;
-  const view = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength);
-  const bitLengthHigh = Math.floor(messageLength / 536870912);
-  const bitLengthLow = messageLength % 536870912 * 8;
-  view.setUint32(paddedLength - 8, bitLengthHigh, false);
-  view.setUint32(paddedLength - 4, bitLengthLow >>> 0, false);
-  const h0Init = 1732584193;
-  const h1Init = 4023233417;
-  const h2Init = 2562383102;
-  const h3Init = 271733878;
-  const h4Init = 3285377520;
-  let h0 = h0Init;
-  let h1 = h1Init;
-  let h2 = h2Init;
-  let h3 = h3Init;
-  let h4 = h4Init;
-  const words = new Uint32Array(80);
-  for (let offset = 0; offset < paddedLength; offset += SHA1_BLOCK_BYTES) {
-    for (let i = 0; i < 16; i++) {
-      words[i] = view.getUint32(offset + i * 4, false);
-    }
-    for (let i = 16; i < 80; i++) {
-      words[i] = rotateLeft32(
-        words[i - 3] ^ words[i - 8] ^ words[i - 14] ^ words[i - 16],
-        1
-      );
-    }
-    let a = h0;
-    let b = h1;
-    let c = h2;
-    let d = h3;
-    let e = h4;
-    for (let i = 0; i < 80; i++) {
-      let f;
-      let k;
-      if (i < 20) {
-        f = b & c | ~b & d;
-        k = 1518500249;
-      } else if (i < 40) {
-        f = b ^ c ^ d;
-        k = 1859775393;
-      } else if (i < 60) {
-        f = b & c | b & d | c & d;
-        k = 2400959708;
-      } else {
-        f = b ^ c ^ d;
-        k = 3395469782;
-      }
-      const temp = rotateLeft32(a, 5) + f + e + k + words[i] >>> 0;
-      e = d;
-      d = c;
-      c = rotateLeft32(b, 30);
-      b = a;
-      a = temp;
-    }
-    h0 = h0 + a >>> 0;
-    h1 = h1 + b >>> 0;
-    h2 = h2 + c >>> 0;
-    h3 = h3 + d >>> 0;
-    h4 = h4 + e >>> 0;
-  }
-  const digest = new Uint8Array(SHA1_DIGEST_BYTES);
-  const digestView = new DataView(
-    digest.buffer,
-    digest.byteOffset,
-    digest.byteLength
-  );
-  digestView.setUint32(0, h0, false);
-  digestView.setUint32(4, h1, false);
-  digestView.setUint32(8, h2, false);
-  digestView.setUint32(12, h3, false);
-  digestView.setUint32(16, h4, false);
-  return Array.from(digest);
-}
-function hmacSha1(key, message) {
-  let normalizedKey = key;
-  if (normalizedKey.length > SHA1_BLOCK_BYTES) {
-    normalizedKey = sha1(normalizedKey);
-  }
-  const block = new Array(SHA1_BLOCK_BYTES).fill(0);
-  for (let i = 0; i < normalizedKey.length; i++) {
-    block[i] = normalizedKey[i];
-  }
-  const innerPad = block.map((byte) => byte ^ 54);
-  const outerPad = block.map((byte) => byte ^ 92);
-  const innerDigest = sha1(innerPad.concat(message));
-  return sha1(outerPad.concat(innerDigest));
-}
-var UNRESERVED = (() => {
-  const table = new Uint8Array(128);
-  const marks = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.~";
-  for (const ch of marks) {
-    table[ch.charCodeAt(0)] = 1;
-  }
-  return table;
-})();
-var HEX_UPPER = "0123456789ABCDEF";
-function percentEncode(value) {
-  const bytes = utf8Bytes(value);
-  let out = "";
-  for (const byte of bytes) {
-    if (byte < 128 && UNRESERVED[byte] === 1) {
-      out += String.fromCharCode(byte);
-    } else {
-      out += "%" + HEX_UPPER[byte >> 4 & 15] + HEX_UPPER[byte & 15];
-    }
-  }
-  return out;
 }
 
 // src/providers/cdt-server.ts
@@ -4219,6 +4247,7 @@ async function main(ctx) {
     {
       at: now.toISOString(),
       mode: actionsProven ? "live" : "dry-run",
+      controlFingerprint: controlFingerprint(config),
       scopeCount: snapshot.trafficScopes.length,
       instanceCount: snapshot.instances.length,
       decisions: result.decisions.map((decision) => ({

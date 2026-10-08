@@ -52,6 +52,8 @@ export interface RunLogEntry {
    * nothing was written to the cloud no matter what the policy decided.
    */
   mode: "dry-run" | "live";
+  /** Control-config fingerprint, so a mismatch with the reader is detectable. */
+  controlFingerprint: string | null;
   scopeCount: number;
   instanceCount: number;
   decisions: RunLogDecision[];
@@ -75,6 +77,7 @@ export function writeRunLog(cache: Cache, entry: RunLogEntry, now: Date): void {
     {
       at: entry.at,
       mode: entry.mode,
+      controlFingerprint: entry.controlFingerprint,
       scopeCount: entry.scopeCount,
       instanceCount: entry.instanceCount,
       decisions: entry.decisions.slice(0, MAX_DECISIONS),
@@ -99,6 +102,9 @@ export function validateRunLog(value: unknown): RunLogEntry | null {
   if (typeof record["scopeCount"] !== "number" || typeof record["instanceCount"] !== "number") {
     return null;
   }
+  // Optional: a record written by an older build has no fingerprint.
+  const controlFingerprint =
+    typeof record["controlFingerprint"] === "string" ? record["controlFingerprint"] : null;
 
   const decisions: RunLogDecision[] = [];
   if (Array.isArray(record["decisions"])) {
@@ -155,6 +161,7 @@ export function validateRunLog(value: unknown): RunLogEntry | null {
   return {
     at: record["at"],
     mode,
+    controlFingerprint,
     scopeCount: record["scopeCount"],
     instanceCount: record["instanceCount"],
     decisions,

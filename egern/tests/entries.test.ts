@@ -18,6 +18,8 @@ import controlEntry from "../src/entries/control.ts";
 import { WIDGET_FAMILIES } from "../src/host/types.ts";
 import { createFakeContext } from "./host-fake.ts";
 import type { RecordedRequest } from "./host-fake.ts";
+import { controlFingerprint } from "../src/services/control.ts";
+import { parseConfig } from "../src/config/parse.ts";
 
 const SECRET = "SUPER_SECRET_ACCESS_KEY_VALUE";
 const QUOTA_BYTES = 200;
@@ -508,4 +510,35 @@ test("diagnostics says 'no record' rather than implying nothing happened", async
   assert.ok(text.includes("暂无记录"));
   // And it must own the cross-context caveat rather than hide it.
   assert.ok(text.includes("未") && text.includes("验证"));
+});
+
+/* ------------------- control-config fingerprint (mismatch detector) ------- */
+
+test("the control fingerprint separates an attested config from a dry-run one", () => {
+  const dry = parseConfig({
+    ...baseEnv(),
+    CDT_CONTROL_JSON: JSON.stringify({ schemaVersion: 1, enabled: true, keepAlive: true }),
+  });
+  const live = parseConfig({
+    ...baseEnv(),
+    CDT_CONTROL_JSON: JSON.stringify({
+      schemaVersion: 1,
+      enabled: true,
+      verifiedOnDevice: "2026-10-08",
+      keepAlive: true,
+    }),
+  });
+  assert.equal(dry.ok, true);
+  assert.equal(live.ok, true);
+  if (!dry.ok || !live.ok) return;
+  // If these collided, the mismatch between the scheduled run and a manual
+  // diagnostics run would stay invisible.
+  assert.notEqual(controlFingerprint(dry.config), controlFingerprint(live.config));
+  assert.equal(controlFingerprint(live.config), controlFingerprint(live.config));
+});
+
+test("diagnostics prints its own control-config fingerprint", async () => {
+  const fake = createFakeContext({ env: baseEnv(), responder: aliyunResponder });
+  const text = JSON.stringify(await diagnosticsEntry(fake.ctx));
+  assert.ok(text.includes("控制配置指纹"));
 });

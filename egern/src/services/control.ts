@@ -41,6 +41,7 @@ import type {
 import { validateControlIntent } from "../domain/policy.ts";
 import type { RequestScope } from "../providers/types.ts";
 import type { Cache } from "./cache.ts";
+import { hexEncode, sha1, utf8Bytes } from "../host/crypto.ts";
 
 /**
  * Evidence required before any local write may run.
@@ -98,6 +99,52 @@ export function describeCapability(config: AppConfig): string {
 }
 
 /** Write operations, kept separate from the read-only provider interface. */
+/**
+ * Short fingerprint of everything that decides *whether and what* gets written.
+ *
+ * The cache fingerprint covers identity only, so a control-config difference
+ * between two scripts is invisible in it. That matters in practice: the manual
+ * diagnostics run and the scheduled automation run can end up reading different
+ * environments (for example when one variable is set on a widget instead of the
+ * module), and then one reports "verified" while the other reports "dry run"
+ * with no way to tell why. Printing this on both sides makes that visible.
+ *
+ * Derived from control-relevant fields only; contains no secret material.
+ */
+export function controlFingerprint(config: AppConfig): string {
+  const control = config.control;
+  const identity = JSON.stringify({
+    enabled: control.enabled,
+    credentialId: control.credentialId,
+    allowed: [...control.allowedInstanceIds].sort(),
+    attestation: {
+      cross: control.deviceVerification.crossExecutionIntentClaim,
+      serial: control.deviceVerification.hostSerializesSameTarget,
+      verifiedAt: control.deviceVerification.verifiedAt,
+    },
+    instances: control.instances
+      .map((policy) => ({
+        id: policy.instanceId,
+        keepAlive: policy.keepAlive,
+        schedule: policy.scheduleControlEnabled,
+        shutdown: policy.shutdownMode,
+      }))
+      .sort((a, b) => (a.id < b.id ? -1 : 1)),
+    scopes: control.scopes
+      .map((scope) => ({
+        id: scope.scopeId,
+        stop: scope.thresholdStopEnabled,
+        action: scope.thresholdAction,
+      }))
+      .sort((a, b) => (a.id < b.id ? -1 : 1)),
+    cooldown: control.actionCooldownSeconds,
+    pauseUntil: control.pauseUntil,
+  });
+  // sha1 is already implemented for signing; a non-cryptographic identifier is
+  // all this needs, and it must stay stable across hosts.
+  return hexEncode(sha1(utf8Bytes(identity))).slice(0, 12);
+}
+
 export interface ControlProvider {
   startInstance(
     scope: RequestScope,

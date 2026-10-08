@@ -41,6 +41,11 @@ function parseClockTime(value) {
 }
 
 // src/host/crypto.ts
+var SHA1_BLOCK_BYTES = 64;
+var SHA1_DIGEST_BYTES = 20;
+function rotateLeft32(value, count) {
+  return (value << count | value >>> 32 - count) >>> 0;
+}
 function utf8Bytes(input) {
   const out = [];
   for (let i = 0; i < input.length; i++) {
@@ -91,6 +96,90 @@ function hexEncode(bytes) {
     out += (byte < 16 ? "0" : "") + byte.toString(16);
   }
   return out;
+}
+function sha1(message) {
+  const messageLength = message.length;
+  const paddedLength = (() => {
+    const afterOne = messageLength + 1;
+    const remainder = afterOne % SHA1_BLOCK_BYTES;
+    const zeroPad = remainder <= 56 ? 56 - remainder : 56 + (SHA1_BLOCK_BYTES - remainder);
+    return afterOne + zeroPad + 8;
+  })();
+  const buffer = new Uint8Array(paddedLength);
+  buffer.set(message, 0);
+  buffer[messageLength] = 128;
+  const view = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+  const bitLengthHigh = Math.floor(messageLength / 536870912);
+  const bitLengthLow = messageLength % 536870912 * 8;
+  view.setUint32(paddedLength - 8, bitLengthHigh, false);
+  view.setUint32(paddedLength - 4, bitLengthLow >>> 0, false);
+  const h0Init = 1732584193;
+  const h1Init = 4023233417;
+  const h2Init = 2562383102;
+  const h3Init = 271733878;
+  const h4Init = 3285377520;
+  let h0 = h0Init;
+  let h1 = h1Init;
+  let h2 = h2Init;
+  let h3 = h3Init;
+  let h4 = h4Init;
+  const words = new Uint32Array(80);
+  for (let offset = 0; offset < paddedLength; offset += SHA1_BLOCK_BYTES) {
+    for (let i = 0; i < 16; i++) {
+      words[i] = view.getUint32(offset + i * 4, false);
+    }
+    for (let i = 16; i < 80; i++) {
+      words[i] = rotateLeft32(
+        words[i - 3] ^ words[i - 8] ^ words[i - 14] ^ words[i - 16],
+        1
+      );
+    }
+    let a = h0;
+    let b = h1;
+    let c = h2;
+    let d = h3;
+    let e = h4;
+    for (let i = 0; i < 80; i++) {
+      let f;
+      let k;
+      if (i < 20) {
+        f = b & c | ~b & d;
+        k = 1518500249;
+      } else if (i < 40) {
+        f = b ^ c ^ d;
+        k = 1859775393;
+      } else if (i < 60) {
+        f = b & c | b & d | c & d;
+        k = 2400959708;
+      } else {
+        f = b ^ c ^ d;
+        k = 3395469782;
+      }
+      const temp = rotateLeft32(a, 5) + f + e + k + words[i] >>> 0;
+      e = d;
+      d = c;
+      c = rotateLeft32(b, 30);
+      b = a;
+      a = temp;
+    }
+    h0 = h0 + a >>> 0;
+    h1 = h1 + b >>> 0;
+    h2 = h2 + c >>> 0;
+    h3 = h3 + d >>> 0;
+    h4 = h4 + e >>> 0;
+  }
+  const digest = new Uint8Array(SHA1_DIGEST_BYTES);
+  const digestView = new DataView(
+    digest.buffer,
+    digest.byteOffset,
+    digest.byteLength
+  );
+  digestView.setUint32(0, h0, false);
+  digestView.setUint32(4, h1, false);
+  digestView.setUint32(8, h2, false);
+  digestView.setUint32(12, h3, false);
+  digestView.setUint32(16, h4, false);
+  return Array.from(digest);
 }
 var UNRESERVED = (() => {
   const table = new Uint8Array(128);
@@ -1701,6 +1790,33 @@ function describeCapability(config) {
   if (!capability.hostSerializesSameTarget) missing.push("同目标串行执行");
   return `未验证（缺少：${missing.join("、")}）`;
 }
+function controlFingerprint(config) {
+  const control = config.control;
+  const identity = JSON.stringify({
+    enabled: control.enabled,
+    credentialId: control.credentialId,
+    allowed: [...control.allowedInstanceIds].sort(),
+    attestation: {
+      cross: control.deviceVerification.crossExecutionIntentClaim,
+      serial: control.deviceVerification.hostSerializesSameTarget,
+      verifiedAt: control.deviceVerification.verifiedAt
+    },
+    instances: control.instances.map((policy) => ({
+      id: policy.instanceId,
+      keepAlive: policy.keepAlive,
+      schedule: policy.scheduleControlEnabled,
+      shutdown: policy.shutdownMode
+    })).sort((a, b) => a.id < b.id ? -1 : 1),
+    scopes: control.scopes.map((scope) => ({
+      id: scope.scopeId,
+      stop: scope.thresholdStopEnabled,
+      action: scope.thresholdAction
+    })).sort((a, b) => a.id < b.id ? -1 : 1),
+    cooldown: control.actionCooldownSeconds,
+    pauseUntil: control.pauseUntil
+  });
+  return hexEncode(sha1(utf8Bytes(identity))).slice(0, 12);
+}
 
 // src/services/runlog.ts
 var RUN_LOG_ENTITY = "automation";
@@ -1716,6 +1832,7 @@ function validateRunLog(value) {
   if (typeof record["scopeCount"] !== "number" || typeof record["instanceCount"] !== "number") {
     return null;
   }
+  const controlFingerprint2 = typeof record["controlFingerprint"] === "string" ? record["controlFingerprint"] : null;
   const decisions = [];
   if (Array.isArray(record["decisions"])) {
     for (const item of record["decisions"]) {
@@ -1763,6 +1880,7 @@ function validateRunLog(value) {
   return {
     at: record["at"],
     mode,
+    controlFingerprint: controlFingerprint2,
     scopeCount: record["scopeCount"],
     instanceCount: record["instanceCount"],
     decisions,
@@ -1896,6 +2014,7 @@ async function main(ctx) {
     `写入能力：${describeCapability(config)}`,
     // These identifiers appear in CDT_CONTROL_JSON but nowhere in the UI, so
     // without printing them a user writing the explicit form has to guess.
+    `控制配置指纹：${controlFingerprint(config)}`,
     `可引用 id：${[
       ...config.credentials.map((credential) => `凭据=${credential.id}`),
       ...config.instances.map((instance) => `实例=${instance.id}`)
@@ -1905,7 +2024,7 @@ async function main(ctx) {
   if (problems.length > 0) {
     lines.push("— 配置问题 —", ...problems);
   }
-  lines.push("— 上次自动策略 —", ...describeLastRun(prepared.runtime));
+  lines.push("— 上次自动策略 —", ...describeLastRun(prepared.runtime, controlFingerprint(config)));
   lines.push("— 能力探测 —", ...groupProbes(probes));
   const healthy = issues.every((issue) => issue.severity !== "error");
   return renderReport(
@@ -1915,7 +2034,7 @@ async function main(ctx) {
     healthy
   );
 }
-function describeLastRun(runtime) {
+function describeLastRun(runtime, ownFingerprint) {
   const entry = readRunLog(runtime.cache);
   if (entry === null) {
     return [

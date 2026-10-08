@@ -17,7 +17,7 @@
 
 import type { EgernScriptContext } from "../host/types.ts";
 import { prepareRuntime, WIDGET_BUDGET_MS } from "./runtime.ts";
-import { describeCapability } from "../services/control.ts";
+import { controlFingerprint, describeCapability } from "../services/control.ts";
 import { readRunLog } from "../services/runlog.ts";
 import type { ConfigIssue } from "../config/env.ts";
 
@@ -201,6 +201,7 @@ export default async function main(ctx: EgernScriptContext): Promise<unknown> {
     `写入能力：${describeCapability(config)}`,
     // These identifiers appear in CDT_CONTROL_JSON but nowhere in the UI, so
     // without printing them a user writing the explicit form has to guess.
+    `控制配置指纹：${controlFingerprint(config)}`,
     `可引用 id：${[
       ...config.credentials.map((credential) => `凭据=${credential.id}`),
       ...config.instances.map((instance) => `实例=${instance.id}`),
@@ -213,7 +214,7 @@ export default async function main(ctx: EgernScriptContext): Promise<unknown> {
   }
   // The last automation run: without it, enabling keep-alive is untestable,
   // because the schedule entry has no UI of its own.
-  lines.push("— 上次自动策略 —", ...describeLastRun(prepared.runtime));
+  lines.push("— 上次自动策略 —", ...describeLastRun(prepared.runtime, controlFingerprint(config)));
 
   lines.push("— 能力探测 —", ...groupProbes(probes));
 
@@ -234,6 +235,7 @@ export default async function main(ctx: EgernScriptContext): Promise<unknown> {
  */
 function describeLastRun(
   runtime: { cache: Parameters<typeof readRunLog>[0]; clock: { now(): Date } },
+  ownFingerprint: string,
 ): string[] {
   const entry = readRunLog(runtime.cache);
   if (entry === null) {

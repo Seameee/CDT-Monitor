@@ -23,6 +23,7 @@ import { createTimeZoneProvider } from "../domain/timezone.ts";
 import { collectSnapshot } from "../services/collect.ts";
 import {
   capabilityFromConfig,
+  controlFingerprint,
   executeControlIntent,
 } from "../services/control.ts";
 import { dispatchNotification } from "../services/notifications.ts";
@@ -217,6 +218,7 @@ export default async function main(ctx: EgernScriptContext): Promise<void> {
     {
       at: now.toISOString(),
       mode: actionsProven ? "live" : "dry-run",
+      controlFingerprint: controlFingerprint(config),
       scopeCount: snapshot.trafficScopes.length,
       instanceCount: snapshot.instances.length,
       decisions: result.decisions.map((decision) => ({
