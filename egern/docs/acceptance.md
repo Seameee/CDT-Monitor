@@ -13,7 +13,7 @@
 | 命令 | 结果 |
 | --- | --- |
 | `npm run typecheck` | 退出码 0 |
-| `npm test` | **223 项通过 / 0 失败** |
+| `npm test` | **224 项通过 / 0 失败** |
 | `npm run build` | 生成 5 脚本 + 1 模块 + `manifest.json` |
 | `npm run check:modules` | 通过 |
 | `npm run check:bundles` | 通过（含读写边界断言） |

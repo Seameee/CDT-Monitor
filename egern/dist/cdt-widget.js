@@ -2714,6 +2714,7 @@ var ENV_KEYS = {
   trafficClass: "CDT_TRAFFIC_CLASS",
   thresholdPercent: "CDT_THRESHOLD_PERCENT",
   refreshSeconds: "CDT_REFRESH_SECONDS",
+  automationIntervalSeconds: "CDT_AUTOMATION_INTERVAL_SECONDS",
   billingEnabled: "CDT_BILLING_ENABLED",
   localNotify: "CDT_LOCAL_NOTIFY",
   timezone: "CDT_TIMEZONE",
@@ -2730,6 +2731,7 @@ var ENV_KEYS = {
   theme: "CDT_THEME"
 };
 var DEFAULT_REFRESH_SECONDS = 900;
+var DEFAULT_AUTOMATION_INTERVAL_SECONDS = 300;
 function emptyControlConfig() {
   return {
     schemaVersion: 1,
@@ -3204,6 +3206,12 @@ function parseConfig(env, view = readViewSelection(env)) {
     DEFAULT_REFRESH_SECONDS,
     issues
   );
+  const automationIntervalSeconds = readNonNegativeInteger(
+    env,
+    ENV_KEYS.automationIntervalSeconds,
+    DEFAULT_AUTOMATION_INTERVAL_SECONDS,
+    issues
+  );
   let credentials = [];
   let accounts = [];
   let trafficScopes = [];
@@ -3293,6 +3301,7 @@ function parseConfig(env, view = readViewSelection(env)) {
     timezone,
     debug,
     refreshSeconds,
+    automationIntervalSeconds,
     billingEnabled,
     localNotify,
     credentials,

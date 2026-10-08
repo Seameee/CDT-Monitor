@@ -296,6 +296,11 @@ export interface AppConfig {
   timezone: string;
   debug: boolean;
   refreshSeconds: number;
+  /**
+   * Minimum spacing between automation checks, enforced in-script before any
+   * network call. See DEFAULT_AUTOMATION_INTERVAL_SECONDS.
+   */
+  automationIntervalSeconds: number;
   billingEnabled: boolean;
   localNotify: boolean;
   credentials: Credential[];

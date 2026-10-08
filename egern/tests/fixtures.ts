@@ -107,6 +107,8 @@ export function appConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     displayName: "CDT",
     timezone: "Asia/Shanghai",
     debug: false,
+    // No throttle in fixtures: tests must not depend on a previous run's log.
+    automationIntervalSeconds: 0,
     refreshSeconds: 900,
     billingEnabled: false,
     localNotify: false,

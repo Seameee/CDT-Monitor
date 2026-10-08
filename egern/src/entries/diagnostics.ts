@@ -195,6 +195,7 @@ export default async function main(ctx: EgernScriptContext): Promise<unknown> {
         ? "已配置"
         : "未配置"
     }`,
+    `自动检查间隔：${config.automationIntervalSeconds} 秒（声明 cron 为 5 分钟）`,
     `账单 ${config.billingEnabled ? "开" : "关"} · 本地通知 ${
       config.localNotify ? "开" : "关"
     } · 控制 ${config.control.enabled ? "开" : "关（默认）"}`,

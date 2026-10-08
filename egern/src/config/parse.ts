@@ -71,6 +71,7 @@ export const ENV_KEYS = {
   trafficClass: "CDT_TRAFFIC_CLASS",
   thresholdPercent: "CDT_THRESHOLD_PERCENT",
   refreshSeconds: "CDT_REFRESH_SECONDS",
+  automationIntervalSeconds: "CDT_AUTOMATION_INTERVAL_SECONDS",
   billingEnabled: "CDT_BILLING_ENABLED",
   localNotify: "CDT_LOCAL_NOTIFY",
   timezone: "CDT_TIMEZONE",
@@ -89,6 +90,17 @@ export const ENV_KEYS = {
 
 /** Default refresh interval in seconds (a cache TTL, not a cron schedule). */
 export const DEFAULT_REFRESH_SECONDS = 900;
+
+/**
+ * Default minimum spacing between two automation *checks*, in seconds.
+ *
+ * The module's cron only says how often iOS may wake the script; it cannot stop
+ * the script from doing full cloud reads on every wake-up, and iOS may wake it
+ * more often than the cron suggests. This throttle is enforced inside the script
+ * *before* any network call, so raising it genuinely reduces battery and API use
+ * without needing a forked module. 300 keeps the original behaviour.
+ */
+export const DEFAULT_AUTOMATION_INTERVAL_SECONDS = 300;
 
 function emptyControlConfig(): ControlConfig {
   return {
@@ -659,6 +671,12 @@ export function parseConfig(
     DEFAULT_REFRESH_SECONDS,
     issues,
   );
+  const automationIntervalSeconds = readNonNegativeInteger(
+    env,
+    ENV_KEYS.automationIntervalSeconds,
+    DEFAULT_AUTOMATION_INTERVAL_SECONDS,
+    issues,
+  );
 
   let credentials: Credential[] = [];
   let accounts: AccountConfig[] = [];
@@ -764,6 +782,7 @@ export function parseConfig(
     timezone,
     debug,
     refreshSeconds,
+    automationIntervalSeconds,
     billingEnabled,
     localNotify,
     credentials,

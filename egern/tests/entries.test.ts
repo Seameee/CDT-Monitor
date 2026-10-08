@@ -13,7 +13,7 @@ import assert from "node:assert/strict";
 import widgetEntry from "../src/entries/widget.ts";
 import refreshEntry from "../src/entries/refresh.ts";
 import diagnosticsEntry from "../src/entries/diagnostics.ts";
-import automationEntry, { shouldNotifyAction } from "../src/entries/automation.ts";
+import automationEntry, { automationDue, shouldNotifyAction } from "../src/entries/automation.ts";
 import controlEntry from "../src/entries/control.ts";
 import { WIDGET_FAMILIES } from "../src/host/types.ts";
 import { createFakeContext } from "./host-fake.ts";
@@ -602,4 +602,25 @@ test("a change of failure reason notifies immediately", () => {
     shouldNotifyAction(cache, "instance-main", "start", "NetworkError", new Date("2026-10-09T00:02:00Z")),
     true,
   );
+});
+
+
+/* ------------------- automation cost throttle ---------------------------- */
+
+test("the automation throttle decides purely from the last run time", () => {
+  const now = new Date("2026-10-09T12:00:00Z");
+  // Disabled: every wake-up checks.
+  assert.equal(automationDue(null, now, 0), true);
+  assert.equal(automationDue("2026-10-09T11:59:59Z", now, 0), true);
+  // No history: the first run must always happen.
+  assert.equal(automationDue(null, now, 900), true);
+  // Just inside the window: skipped, which is what saves battery and API calls.
+  assert.equal(automationDue("2026-10-09T11:45:01Z", now, 900), false);
+  assert.equal(automationDue("2026-10-09T11:59:00Z", now, 900), false);
+  // At or past the window: due.
+  assert.equal(automationDue("2026-10-09T11:45:00Z", now, 900), true);
+  assert.equal(automationDue("2026-10-09T11:00:00Z", now, 900), true);
+  // Rubbish or a backwards clock must not wedge the check permanently.
+  assert.equal(automationDue("not-a-date", now, 900), true);
+  assert.equal(automationDue("2026-10-09T13:00:00Z", now, 900), true);
 });

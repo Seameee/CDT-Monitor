@@ -28,7 +28,7 @@ import {
 } from "../services/control.ts";
 import { dispatchNotification } from "../services/notifications.ts";
 import type { Cache } from "../services/cache.ts";
-import { writeRunLog } from "../services/runlog.ts";
+import { readRunLog, writeRunLog } from "../services/runlog.ts";
 import type { RunLogWrite } from "../services/runlog.ts";
 import type { NotificationEvent } from "../services/notifications.ts";
 import { formatPercent } from "../domain/format.ts";
@@ -39,6 +39,28 @@ import {
   prepareRuntime,
 } from "./runtime.ts";
 import { DirectControlProvider } from "../providers/aliyun/control.ts";
+
+/**
+ * Whether enough time has passed since the last automation check.
+ *
+ * Pure and separate so the throttle is testable without fabricating a cache
+ * envelope, and so its edge cases stay explicit.
+ */
+export function automationDue(
+  lastRunAt: string | null,
+  now: Date,
+  intervalSeconds: number,
+): boolean {
+  // Zero disables the throttle: every wake-up performs a check.
+  if (!(intervalSeconds > 0)) return true;
+  if (lastRunAt === null) return true;
+  const parsed = Date.parse(lastRunAt);
+  if (!Number.isFinite(parsed)) return true;
+  const since = (now.getTime() - parsed) / 1000;
+  // A clock that jumped backwards must not wedge the check forever.
+  if (since < 0) return true;
+  return since >= intervalSeconds;
+}
 
 export default async function main(ctx: EgernScriptContext): Promise<void> {
   const prepared = prepareRuntime(ctx, REFRESH_BUDGET_MS);
@@ -53,6 +75,17 @@ export default async function main(ctx: EgernScriptContext): Promise<void> {
   if (!config.control.enabled) return;
 
   const provider = createProvider(runtime);
+  // ---- cost throttle -----------------------------------------------------
+  // The module's cron controls how often iOS *may* wake this script, not how
+  // often it does: iOS may run it more often, and every run issues real cloud
+  // reads. Returning here, before any request is built, is what actually saves
+  // battery and API quota. The last real run is read from the run log, so no
+  // extra state is kept.
+  const previousRun = readRunLog(cache);
+  if (!automationDue(previousRun?.at ?? null, now, config.automationIntervalSeconds)) {
+    return;
+  }
+
   const { snapshot } = await collectSnapshot({
     config,
     cache,
