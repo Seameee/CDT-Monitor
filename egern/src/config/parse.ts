@@ -187,8 +187,8 @@ export function computeConfigFingerprint(config: AppConfig): string {
 /** Parse the control document, leaving control disabled on any doubt. */
 function parseControlConfig(
   value: unknown,
-  knownCredentialIds: ReadonlySet<string>,
-  knownInstanceIds: ReadonlySet<string>,
+  knownCredentialIds: readonly string[],
+  knownInstanceIds: readonly string[],
   issues: IssueCollector,
 ): ControlConfig {
   const config = emptyControlConfig();
@@ -209,6 +209,8 @@ function parseControlConfig(
   const knownKeys = [
     "schemaVersion", "enabled", "deviceVerification", "credentialId",
     "allowedInstanceIds", "scopes", "instances", "actionCooldownSeconds", "pauseUntil",
+    // Shorthands for the common single-instance case.
+    "verifiedOnDevice", "keepAlive",
   ];
   for (const key of Object.keys(record)) {
     if (!knownKeys.includes(key)) {
@@ -222,6 +224,40 @@ function parseControlConfig(
     return config;
   }
   config.enabled = record["enabled"] === true;
+
+  // Shorthand attestation: a single date meaning "I verified BOTH preconditions
+  // on this device". The detailed deviceVerification object below remains for
+  // anyone who wants to record them separately. Requiring two booleans plus a
+  // date for a one-instance setup was needless friction that pushed people
+  // towards copying a snippet they had not actually verified.
+  const verifiedOnDevice = record["verifiedOnDevice"];
+  if (verifiedOnDevice !== undefined) {
+    if (
+      typeof verifiedOnDevice !== "string" ||
+      !Number.isFinite(Date.parse(verifiedOnDevice))
+    ) {
+      issues.error(
+        "CDT_CONTROL_JSON.verifiedOnDevice",
+        "verifiedOnDevice 必须是合法的 ISO 8601 日期，控制保持关闭",
+      );
+      config.enabled = false;
+      return config;
+    }
+    if (record["deviceVerification"] !== undefined) {
+      issues.error(
+        "CDT_CONTROL_JSON",
+        "verifiedOnDevice 与 deviceVerification 不能同时使用，控制保持关闭",
+      );
+      config.enabled = false;
+      return config;
+    }
+    config.deviceVerification = {
+      crossExecutionIntentClaim: true,
+      hostSerializesSameTarget: true,
+      verifiedAt: verifiedOnDevice,
+      note: "verifiedOnDevice",
+    };
+  }
 
   // Device attestation. Parsed strictly and before anything else, because it is
   // what decides whether a cloud write is permitted at all.
@@ -297,32 +333,16 @@ function parseControlConfig(
 
   const credentialId = record["credentialId"];
   if (credentialId !== undefined && credentialId !== null) {
-    if (typeof credentialId !== "string" || !knownCredentialIds.has(credentialId)) {
+    if (typeof credentialId !== "string" || !knownCredentialIds.includes(credentialId)) {
       issues.error("CDT_CONTROL_JSON.credentialId", "控制凭据不存在，控制保持关闭");
       config.enabled = false;
       return config;
     }
     config.credentialId = credentialId;
-  }
-
-  const allowed = record["allowedInstanceIds"];
-  if (allowed !== undefined) {
-    if (!Array.isArray(allowed)) {
-      issues.error("CDT_CONTROL_JSON.allowedInstanceIds", "allowedInstanceIds 必须是数组");
-      config.enabled = false;
-      return config;
-    }
-    for (const entry of allowed as unknown[]) {
-      if (typeof entry !== "string" || !knownInstanceIds.has(entry)) {
-        issues.error(
-          "CDT_CONTROL_JSON.allowedInstanceIds",
-          `控制白名单包含未知实例 ${String(entry)}，控制保持关闭`,
-        );
-        config.enabled = false;
-        return config;
-      }
-      config.allowedInstanceIds.push(entry);
-    }
+  } else if (knownCredentialIds.length === 1) {
+    // Nothing to choose between, and the identifier is not visible in the UI, so
+    // requiring the user to type it would just be a guessing game.
+    config.credentialId = knownCredentialIds[0] as string;
   }
 
   const cooldown = record["actionCooldownSeconds"];
@@ -404,7 +424,7 @@ function parseControlConfig(
       }
       const item = entry as Record<string, unknown>;
       const instanceId = item["instanceId"];
-      if (typeof instanceId !== "string" || !knownInstanceIds.has(instanceId)) {
+      if (typeof instanceId !== "string" || !knownInstanceIds.includes(instanceId)) {
         issues.error("CDT_CONTROL_JSON.instances", "控制 instances 引用了未知实例");
         config.enabled = false;
         return config;
@@ -431,6 +451,92 @@ function parseControlConfig(
           ? "StopCharging"
           : "KeepCharging") as ShutdownMode,
       });
+    }
+  }
+
+  // ---- allow-list resolution -------------------------------------------
+  // Resolved *after* `instances`, because declaring a per-instance policy is
+  // itself an act of allow-listing and repeating the ids served no purpose.
+  const allowed = record["allowedInstanceIds"];
+  if (allowed !== undefined) {
+    if (!Array.isArray(allowed)) {
+      issues.error("CDT_CONTROL_JSON.allowedInstanceIds", "allowedInstanceIds 必须是数组");
+      config.enabled = false;
+      return config;
+    }
+    for (const entry of allowed as unknown[]) {
+      if (typeof entry !== "string" || !knownInstanceIds.includes(entry)) {
+        issues.error(
+          "CDT_CONTROL_JSON.allowedInstanceIds",
+          `控制白名单包含未知实例 ${String(entry)}，控制保持关闭`,
+        );
+        config.enabled = false;
+        return config;
+      }
+      config.allowedInstanceIds.push(entry);
+    }
+  } else {
+    for (const policy of config.instances) {
+      config.allowedInstanceIds.push(policy.instanceId);
+    }
+  }
+
+  // ---- keepAlive shorthand for the single-instance case ----------------
+  const keepAlive = record["keepAlive"];
+  if (keepAlive !== undefined) {
+    if (typeof keepAlive !== "boolean") {
+      issues.error("CDT_CONTROL_JSON.keepAlive", "keepAlive 必须是布尔值，控制保持关闭");
+      config.enabled = false;
+      return config;
+    }
+    if (record["instances"] !== undefined || record["allowedInstanceIds"] !== undefined) {
+      issues.error(
+        "CDT_CONTROL_JSON.keepAlive",
+        "keepAlive 简写不能与 instances / allowedInstanceIds 同时使用，控制保持关闭",
+      );
+      config.enabled = false;
+      return config;
+    }
+    if (knownInstanceIds.length === 0) {
+      issues.error(
+        "CDT_CONTROL_JSON.keepAlive",
+        "没有可保活的实例：请先填写 CDT_INSTANCE_ID，控制保持关闭",
+      );
+      config.enabled = false;
+      return config;
+    }
+    if (knownInstanceIds.length > 1) {
+      issues.error(
+        "CDT_CONTROL_JSON.keepAlive",
+        `配置了 ${knownInstanceIds.length} 个实例，keepAlive 简写无法确定目标；请显式列出 allowedInstanceIds 与 instances`,
+      );
+      config.enabled = false;
+      return config;
+    }
+    const only = knownInstanceIds[0] as string;
+    config.allowedInstanceIds = [only];
+    config.instances = [
+      {
+        instanceId: only,
+        scheduleControlEnabled: false,
+        keepAlive: keepAlive === true,
+        shutdownMode: "KeepCharging",
+      },
+    ];
+  }
+
+  // A policy for an instance that is not allow-listed is a contradictory
+  // configuration; refuse it rather than silently ignoring the policy.
+  for (const policy of config.instances) {
+    if (!config.allowedInstanceIds.includes(policy.instanceId)) {
+      // Global, not entity-scoped: every other control-config refusal is global,
+      // and a policy that silently does nothing is worse than a loud failure.
+      issues.error(
+        "CDT_CONTROL_JSON",
+        `实例 ${policy.instanceId} 有控制策略但不在 allowedInstanceIds 中，控制保持关闭`,
+      );
+      config.enabled = false;
+      return config;
     }
   }
 
@@ -619,8 +725,8 @@ export function parseConfig(
     issues.warn(ENV_KEYS.baseUrl, "direct 模式下 CDT_BASE_URL 不会被使用");
   }
 
-  const knownCredentialIds = new Set(credentials.map((credential) => credential.id));
-  const knownInstanceIds = new Set(instances.map((instance) => instance.id));
+  const knownCredentialIds = credentials.map((credential) => credential.id);
+  const knownInstanceIds = instances.map((instance) => instance.id);
 
   const control = parseControlConfig(
     readJson(env, ENV_KEYS.controlJson, issues),

@@ -199,6 +199,12 @@ export default async function main(ctx: EgernScriptContext): Promise<unknown> {
       config.localNotify ? "开" : "关"
     } · 控制 ${config.control.enabled ? "开" : "关（默认）"}`,
     `写入能力：${describeCapability(config)}`,
+    // These identifiers appear in CDT_CONTROL_JSON but nowhere in the UI, so
+    // without printing them a user writing the explicit form has to guess.
+    `可引用 id：${[
+      ...config.credentials.map((credential) => `凭据=${credential.id}`),
+      ...config.instances.map((instance) => `实例=${instance.id}`),
+    ].join(" ") || "（无）"}`,
   ];
 
   const problems = summarizeIssues(issues);

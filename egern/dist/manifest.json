@@ -5,15 +5,15 @@
   "ref": "main",
   "repoSlug": "Seameee/CDT-Monitor",
   "releaseBaseUrl": "https://raw.githubusercontent.com/Seameee/CDT-Monitor/main/egern/dist",
-  "generatedAt": "2026-10-08T00:34:48.000Z",
+  "generatedAt": "2026-10-08T00:43:56.000Z",
   "esbuildTarget": "es2020",
   "minified": false,
   "scripts": [
     {
       "name": "cdt-widget.js",
       "kind": "read",
-      "bytes": 149757,
-      "sha256": "8c36e11e2c85325f7083927cbc3e5085ed96508548a58dd978c48fc364880a3f",
+      "bytes": 152662,
+      "sha256": "42b809cf5f3fbc57e9a9a1809ca27911273c050997b4af0555b17d36e9f93a21",
       "inputs": [
         "src/host/types.ts",
         "src/domain/models.ts",
@@ -49,8 +49,8 @@
     {
       "name": "cdt-refresh.js",
       "kind": "read",
-      "bytes": 124914,
-      "sha256": "5b21f4983f304c6e9e0c557a344f8ba7cf1a38578ea87cb1d0f5eed0ce358706",
+      "bytes": 127819,
+      "sha256": "26a2665486c9bc37e36949661a1fd58a9a0a407419975a281c39ae655e45f4c9",
       "inputs": [
         "src/domain/usage.ts",
         "src/domain/models.ts",
@@ -82,8 +82,8 @@
     {
       "name": "cdt-diagnostics.js",
       "kind": "read",
-      "bytes": 64979,
-      "sha256": "4dbc36807cd1f0b30b60cb400cd3b594b6207cc9662ec0399a2e9ccbc98d7b69",
+      "bytes": 68241,
+      "sha256": "b17d1569be3458e50aa1b040937562488cdd0c29060c8552e2d14e284d117f5a",
       "inputs": [
         "src/domain/usage.ts",
         "src/domain/models.ts",
@@ -114,8 +114,8 @@
     {
       "name": "cdt-control.js",
       "kind": "write",
-      "bytes": 128172,
-      "sha256": "e7400f627fce09da6aa99ecc9fbbbcbe12ef7c267445bb37ad95f0e473dca38c",
+      "bytes": 131077,
+      "sha256": "3a9a99ec4f162d8357f00d99145904b0ddbe6491a532477766a18c8a9ff077f5",
       "inputs": [
         "src/domain/models.ts",
         "src/services/cache.ts",
@@ -148,8 +148,8 @@
     {
       "name": "cdt-automation.js",
       "kind": "write",
-      "bytes": 143623,
-      "sha256": "f321cda4cbdd19b4a701827f1a9f486977567de0710d841f3805281133ee3bdd",
+      "bytes": 146528,
+      "sha256": "b9b4dbbc9736d5a50a64ad603f4404a48e23ad32461e8a43d00efc89af0e58f7",
       "inputs": [
         "src/domain/models.ts",
         "src/domain/schedule.ts",
@@ -186,8 +186,8 @@
   "modules": [
     {
       "name": "cdt-monitor.yaml",
-      "bytes": 8613,
-      "sha256": "5756d79bae8009bcd4147c9ebc9d148abe79a3eb153e474e9397045cf271c448"
+      "bytes": 8941,
+      "sha256": "ea72bfabdc9e8fa673dbc6cf3b053493aa64c35afd1b92e3ba68494ae4e4c2dd"
     }
   ]
 }

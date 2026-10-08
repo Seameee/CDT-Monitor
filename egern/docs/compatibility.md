@@ -132,8 +132,8 @@ widget 会永久空白。该降级方向是刻意选择的。
 
 #### 第 1 步：演练（不写云端，不需要自证）
 
-1. 配 `CDT_CONTROL_JSON`：`enabled=true`、`allowedInstanceIds`、`instances[].keepAlive=true`；
-   **先不要填 `deviceVerification`**；
+1. 配 `CDT_CONTROL_JSON`：只写 `{"schemaVersion":1,"enabled":true,"keepAlive":true}`，
+   **先不要填 `verifiedOnDevice`**；
 2. 把 `CDT_LOCAL_NOTIFY` 设为 `true`；
 3. 在云控制台**手动关机**；
 4. 等 automation 跑一次（cron 是 5 分钟，但实际取决于 iOS）。
@@ -146,7 +146,7 @@ widget 会永久空白。该降级方向是刻意选择的。
 
 #### 第 2 步：验证写入路径（此时才加自证）
 
-1. 给 `CDT_CONTROL_JSON.deviceVerification` 填上两个 `true` 和 `verifiedAt`；
+1. 给 `CDT_CONTROL_JSON` 加上 `"verifiedOnDevice":"<你验证的日期>"`（或完整的 `deviceVerification`）；
 2. 实例保持关机，等 automation 再跑一次；
 3. **预期**：收到「**CDT 保活：已发送开机指令**」通知；
 4. 去云控制台确认实例确实变成**运行中**。
@@ -168,6 +168,7 @@ widget 会永久空白。该降级方向是刻意选择的。
 | 有运行记录，`动作 ... → AccessDenied` | RAM 凭据缺少 `StartInstance` 权限 |
 | 有运行记录，`动作 ... → Accepted` 但实例仍关机 | 云端受理了但没起来，查云控制台实例状态 |
 | 有运行记录，无任何决策 | 策略条件不满足（超阈值 / 不在允许时段 / 已暂停） |
+| 实例显示「**停止中**」 | 这是**过渡状态**（Stopping），策略刻意不动作：此时下发开机只会失败或冲突。等它变成「已停止」 |
 
 > 注意：`cdt-main-diagnostics` 读取 automation 写的运行记录，**依赖跨上下文缓存共享**，
 > 而这一点 Egern 未文档化。因此**通知是可靠信号，diagnostics 是方便信号**——

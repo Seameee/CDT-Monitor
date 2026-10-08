@@ -137,7 +137,21 @@ CDT 只读权限与目标实例的 `StartInstance`/`StopInstance` 权限。
 | `enabled` | `false` | 为 false 时直接返回，不评估、不读取 |
 | `deviceVerification` 两项 | `false` | 未自证时只评估、只记录拒绝原因，**绝不**发 Start/Stop |
 
-**开启保活的最小配置**（写入 `CDT_CONTROL_JSON`）：
+**开启保活的最简配置**（只监控一台实例时，一行就够）：
+
+```json
+{
+  "schemaVersion": 1,
+  "enabled": true,
+  "verifiedOnDevice": "2026-10-09",
+  "keepAlive": true
+}
+```
+
+`verifiedOnDevice` 填**你实际做真机验证的那天**。`keepAlive: true` 会自动套用到你配置的那一台实例
+（`allowedInstanceIds` 与 `credentialId` 会自动填好，你不需要知道内部 id）。
+
+需要多实例、只停机不保活、按范围熔断等高级用法时，改用完整字段：
 
 ```json
 {
@@ -152,15 +166,14 @@ CDT 只读权限与目标实例的 `StartInstance`/`StopInstance` 权限。
   "credentialId": "cred-main",
   "allowedInstanceIds": ["instance-main"],
   "instances": [
-    {
-      "instanceId": "instance-main",
-      "keepAlive": true,
-      "scheduleControlEnabled": false,
-      "shutdownMode": "KeepCharging"
-    }
+    { "instanceId": "instance-main", "keepAlive": true,
+      "scheduleControlEnabled": false, "shutdownMode": "KeepCharging" }
   ]
 }
 ```
+
+不知道该填哪个 id？手动运行一次 `cdt-main-diagnostics`，报告里的「可引用 id」一行会列出
+`凭据=…` 与 `实例=…`，直接照抄即可。
 
 `deviceVerification` 是**你对自己设备的验证声明**，不是代码能替你确认的事：声明前请先完成
 [兼容性记录 §3](docs/compatibility.md) 的两个真机探针；`verifiedAt` 为必填（缺了会被拒绝，

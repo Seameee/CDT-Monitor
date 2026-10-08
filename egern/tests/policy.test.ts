@@ -550,3 +550,138 @@ test("an attested capability actually lets a control intent execute", async () =
   assert.equal(outcome.code, "Accepted");
   assert.equal(provider.stopped.length, 1);
 });
+
+/* --------------- minimal enablement for the single-instance case ---------- */
+
+const MINIMAL_ENV = {
+  CDT_ACCESS_KEY_ID: "EXAMPLE_AK_ID",
+  CDT_ACCESS_KEY_SECRET: "EXAMPLE_SECRET",
+  CDT_INSTANCE_ID: "i-example",
+};
+
+test("the one-line keepAlive shorthand enables control without naming internal ids", () => {
+  const outcome = parseConfig({
+    ...MINIMAL_ENV,
+    CDT_CONTROL_JSON: JSON.stringify({
+      schemaVersion: 1,
+      enabled: true,
+      verifiedOnDevice: "2026-10-09",
+      keepAlive: true,
+    }),
+  });
+  assert.equal(outcome.ok, true, JSON.stringify(!outcome.ok ? outcome.issues : []));
+  if (!outcome.ok) return;
+
+  const control = outcome.config.control;
+  assert.equal(control.enabled, true);
+  // The allow-list and the credential are resolved for the user, because those
+  // identifiers are not visible anywhere in the UI.
+  assert.deepEqual(control.allowedInstanceIds, ["instance-main"]);
+  assert.equal(control.credentialId, "cred-main");
+  assert.equal(control.instances.length, 1);
+  assert.equal(control.instances[0]?.instanceId, "instance-main");
+  assert.equal(control.instances[0]?.keepAlive, true);
+  // A single dated attestation stands in for the two detailed flags.
+  assert.equal(control.deviceVerification.crossExecutionIntentClaim, true);
+  assert.equal(control.deviceVerification.hostSerializesSameTarget, true);
+  assert.equal(control.deviceVerification.verifiedAt, "2026-10-09");
+  assert.equal(isControlVerified(outcome.config), true);
+});
+
+test("the minimal config really decides to start a stopped instance", () => {
+  const outcome = parseConfig({
+    ...MINIMAL_ENV,
+    CDT_CONTROL_JSON: JSON.stringify({
+      schemaVersion: 1,
+      enabled: true,
+      verifiedOnDevice: "2026-10-09",
+      keepAlive: true,
+    }),
+  });
+  assert.equal(outcome.ok, true);
+  if (!outcome.ok) return;
+
+  const config = outcome.config;
+  const snap = snapshot({
+    trafficScopes: [scopeSnapshot({ overThreshold: false, usagePercent: 10 })],
+    instances: [
+      instanceSnapshot({ id: "instance-main", trafficScopeId: "scope-main-overseas", status: "Stopped" }),
+    ],
+  });
+  // Point the scope at the id the simple model actually generates.
+  const scoped = { ...snap, trafficScopes: [scopeSnapshot({ id: "scope-main-overseas", overThreshold: false, usagePercent: 10 })] };
+
+  const result = evaluateAutomation(scoped, config, NOW, TZ);
+  const start = result.decisions.find((item) => item.kind === "start_instance");
+  assert.ok(start !== undefined, `expected a keep-alive start, blocked: ${JSON.stringify(result.blocked)}`);
+  assert.equal(start?.instanceId, "instance-main");
+});
+
+test("keepAlive shorthand refuses to guess when several instances exist", () => {
+  const outcome = parseConfig({
+    ...MINIMAL_ENV,
+    CDT_ACCOUNTS_JSON: JSON.stringify({
+      schemaVersion: 1,
+      credentials: [
+        { id: "c1", accountId: "a1", accessKeyId: "AK", accessKeySecret: "S", siteType: "china" },
+      ],
+      accounts: [{ id: "a1", name: "A" }],
+      trafficScopes: [
+        { id: "s1", accountId: "a1", credentialId: "c1", trafficClass: "overseas", thresholdPercent: 95 },
+      ],
+      instances: [
+        { id: "i1", accountId: "a1", credentialId: "c1", trafficScopeId: "s1", regionId: "cn-hongkong", instanceId: "i-1" },
+        { id: "i2", accountId: "a1", credentialId: "c1", trafficScopeId: "s1", regionId: "cn-hongkong", instanceId: "i-2" },
+      ],
+    }),
+    CDT_CONTROL_JSON: JSON.stringify({
+      schemaVersion: 1,
+      enabled: true,
+      verifiedOnDevice: "2026-10-09",
+      keepAlive: true,
+    }),
+  });
+  assert.equal(outcome.ok, false);
+  assert.ok(outcome.issues.some((issue) => issue.field.includes("keepAlive")));
+});
+
+test("ambiguous or contradictory control configuration is refused", () => {
+  const cases: Array<[string, Record<string, unknown>]> = [
+    ["keepAlive with explicit instances", {
+      schemaVersion: 1, enabled: true, verifiedOnDevice: "2026-10-09", keepAlive: true,
+      instances: [{ instanceId: "instance-main", keepAlive: true }],
+    }],
+    ["both attestation forms", {
+      schemaVersion: 1, enabled: true, verifiedOnDevice: "2026-10-09", keepAlive: true,
+      deviceVerification: { crossExecutionIntentClaim: true, hostSerializesSameTarget: true, verifiedAt: "2026-10-09" },
+    }],
+    ["malformed attestation date", {
+      schemaVersion: 1, enabled: true, verifiedOnDevice: "not-a-date", keepAlive: true,
+    }],
+    ["non-boolean keepAlive", {
+      schemaVersion: 1, enabled: true, verifiedOnDevice: "2026-10-09", keepAlive: "yes",
+    }],
+  ];
+  for (const [label, control] of cases) {
+    const outcome = parseConfig({
+      ...MINIMAL_ENV,
+      CDT_CONTROL_JSON: JSON.stringify(control),
+    });
+    assert.equal(outcome.ok, false, `${label} should be refused`);
+  }
+});
+
+test("a policy for an instance that is not allow-listed is refused", () => {
+  const outcome = parseConfig({
+    ...MINIMAL_ENV,
+    CDT_CONTROL_JSON: JSON.stringify({
+      schemaVersion: 1,
+      enabled: true,
+      verifiedOnDevice: "2026-10-09",
+      allowedInstanceIds: [],
+      instances: [{ instanceId: "instance-main", keepAlive: true }],
+    }),
+  });
+  assert.equal(outcome.ok, false);
+  assert.ok(outcome.issues.some((issue) => issue.message.includes("allowedInstanceIds")));
+});

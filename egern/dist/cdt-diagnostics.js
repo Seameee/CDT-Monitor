@@ -840,7 +840,10 @@ function parseControlConfig(value, knownCredentialIds, knownInstanceIds, issues)
     "scopes",
     "instances",
     "actionCooldownSeconds",
-    "pauseUntil"
+    "pauseUntil",
+    // Shorthands for the common single-instance case.
+    "verifiedOnDevice",
+    "keepAlive"
   ];
   for (const key of Object.keys(record)) {
     if (!knownKeys.includes(key)) {
@@ -853,6 +856,31 @@ function parseControlConfig(value, knownCredentialIds, knownInstanceIds, issues)
     return config;
   }
   config.enabled = record["enabled"] === true;
+  const verifiedOnDevice = record["verifiedOnDevice"];
+  if (verifiedOnDevice !== void 0) {
+    if (typeof verifiedOnDevice !== "string" || !Number.isFinite(Date.parse(verifiedOnDevice))) {
+      issues.error(
+        "CDT_CONTROL_JSON.verifiedOnDevice",
+        "verifiedOnDevice 必须是合法的 ISO 8601 日期，控制保持关闭"
+      );
+      config.enabled = false;
+      return config;
+    }
+    if (record["deviceVerification"] !== void 0) {
+      issues.error(
+        "CDT_CONTROL_JSON",
+        "verifiedOnDevice 与 deviceVerification 不能同时使用，控制保持关闭"
+      );
+      config.enabled = false;
+      return config;
+    }
+    config.deviceVerification = {
+      crossExecutionIntentClaim: true,
+      hostSerializesSameTarget: true,
+      verifiedAt: verifiedOnDevice,
+      note: "verifiedOnDevice"
+    };
+  }
   const attestation = record["deviceVerification"];
   if (attestation !== void 0) {
     if (attestation === null || typeof attestation !== "object" || Array.isArray(attestation)) {
@@ -916,31 +944,14 @@ function parseControlConfig(value, knownCredentialIds, knownInstanceIds, issues)
   }
   const credentialId = record["credentialId"];
   if (credentialId !== void 0 && credentialId !== null) {
-    if (typeof credentialId !== "string" || !knownCredentialIds.has(credentialId)) {
+    if (typeof credentialId !== "string" || !knownCredentialIds.includes(credentialId)) {
       issues.error("CDT_CONTROL_JSON.credentialId", "控制凭据不存在，控制保持关闭");
       config.enabled = false;
       return config;
     }
     config.credentialId = credentialId;
-  }
-  const allowed = record["allowedInstanceIds"];
-  if (allowed !== void 0) {
-    if (!Array.isArray(allowed)) {
-      issues.error("CDT_CONTROL_JSON.allowedInstanceIds", "allowedInstanceIds 必须是数组");
-      config.enabled = false;
-      return config;
-    }
-    for (const entry of allowed) {
-      if (typeof entry !== "string" || !knownInstanceIds.has(entry)) {
-        issues.error(
-          "CDT_CONTROL_JSON.allowedInstanceIds",
-          `控制白名单包含未知实例 ${String(entry)}，控制保持关闭`
-        );
-        config.enabled = false;
-        return config;
-      }
-      config.allowedInstanceIds.push(entry);
-    }
+  } else if (knownCredentialIds.length === 1) {
+    config.credentialId = knownCredentialIds[0];
   }
   const cooldown = record["actionCooldownSeconds"];
   if (cooldown !== void 0) {
@@ -1018,7 +1029,7 @@ function parseControlConfig(value, knownCredentialIds, knownInstanceIds, issues)
       }
       const item = entry;
       const instanceId = item["instanceId"];
-      if (typeof instanceId !== "string" || !knownInstanceIds.has(instanceId)) {
+      if (typeof instanceId !== "string" || !knownInstanceIds.includes(instanceId)) {
         issues.error("CDT_CONTROL_JSON.instances", "控制 instances 引用了未知实例");
         config.enabled = false;
         return config;
@@ -1039,6 +1050,81 @@ function parseControlConfig(value, knownCredentialIds, knownInstanceIds, issues)
         keepAlive: item["keepAlive"] === true,
         shutdownMode: shutdownMode === "StopCharging" ? "StopCharging" : "KeepCharging"
       });
+    }
+  }
+  const allowed = record["allowedInstanceIds"];
+  if (allowed !== void 0) {
+    if (!Array.isArray(allowed)) {
+      issues.error("CDT_CONTROL_JSON.allowedInstanceIds", "allowedInstanceIds 必须是数组");
+      config.enabled = false;
+      return config;
+    }
+    for (const entry of allowed) {
+      if (typeof entry !== "string" || !knownInstanceIds.includes(entry)) {
+        issues.error(
+          "CDT_CONTROL_JSON.allowedInstanceIds",
+          `控制白名单包含未知实例 ${String(entry)}，控制保持关闭`
+        );
+        config.enabled = false;
+        return config;
+      }
+      config.allowedInstanceIds.push(entry);
+    }
+  } else {
+    for (const policy of config.instances) {
+      config.allowedInstanceIds.push(policy.instanceId);
+    }
+  }
+  const keepAlive = record["keepAlive"];
+  if (keepAlive !== void 0) {
+    if (typeof keepAlive !== "boolean") {
+      issues.error("CDT_CONTROL_JSON.keepAlive", "keepAlive 必须是布尔值，控制保持关闭");
+      config.enabled = false;
+      return config;
+    }
+    if (record["instances"] !== void 0 || record["allowedInstanceIds"] !== void 0) {
+      issues.error(
+        "CDT_CONTROL_JSON.keepAlive",
+        "keepAlive 简写不能与 instances / allowedInstanceIds 同时使用，控制保持关闭"
+      );
+      config.enabled = false;
+      return config;
+    }
+    if (knownInstanceIds.length === 0) {
+      issues.error(
+        "CDT_CONTROL_JSON.keepAlive",
+        "没有可保活的实例：请先填写 CDT_INSTANCE_ID，控制保持关闭"
+      );
+      config.enabled = false;
+      return config;
+    }
+    if (knownInstanceIds.length > 1) {
+      issues.error(
+        "CDT_CONTROL_JSON.keepAlive",
+        `配置了 ${knownInstanceIds.length} 个实例，keepAlive 简写无法确定目标；请显式列出 allowedInstanceIds 与 instances`
+      );
+      config.enabled = false;
+      return config;
+    }
+    const only = knownInstanceIds[0];
+    config.allowedInstanceIds = [only];
+    config.instances = [
+      {
+        instanceId: only,
+        scheduleControlEnabled: false,
+        keepAlive: keepAlive === true,
+        shutdownMode: "KeepCharging"
+      }
+    ];
+  }
+  for (const policy of config.instances) {
+    if (!config.allowedInstanceIds.includes(policy.instanceId)) {
+      issues.error(
+        "CDT_CONTROL_JSON",
+        `实例 ${policy.instanceId} 有控制策略但不在 allowedInstanceIds 中，控制保持关闭`
+      );
+      config.enabled = false;
+      return config;
     }
   }
   return config;
@@ -1191,8 +1277,8 @@ function parseConfig(env, view = readViewSelection(env)) {
   } else if (readString(env, ENV_KEYS.baseUrl) !== null) {
     issues.warn(ENV_KEYS.baseUrl, "direct 模式下 CDT_BASE_URL 不会被使用");
   }
-  const knownCredentialIds = new Set(credentials.map((credential) => credential.id));
-  const knownInstanceIds = new Set(instances.map((instance) => instance.id));
+  const knownCredentialIds = credentials.map((credential) => credential.id);
+  const knownInstanceIds = instances.map((instance) => instance.id);
   const control = parseControlConfig(
     readJson(env, ENV_KEYS.controlJson, issues),
     knownCredentialIds,
@@ -1807,7 +1893,13 @@ async function main(ctx) {
     `账户 ${config.accounts.length} · 流量范围 ${config.trafficScopes.length} · 实例 ${config.instances.length}`,
     `AccessKey：${config.credentials.some((credential) => credential.accessKeySecret !== "") ? "已配置" : "未配置"}`,
     `账单 ${config.billingEnabled ? "开" : "关"} · 本地通知 ${config.localNotify ? "开" : "关"} · 控制 ${config.control.enabled ? "开" : "关（默认）"}`,
-    `写入能力：${describeCapability(config)}`
+    `写入能力：${describeCapability(config)}`,
+    // These identifiers appear in CDT_CONTROL_JSON but nowhere in the UI, so
+    // without printing them a user writing the explicit form has to guess.
+    `可引用 id：${[
+      ...config.credentials.map((credential) => `凭据=${credential.id}`),
+      ...config.instances.map((instance) => `实例=${instance.id}`)
+    ].join(" ") || "（无）"}`
   ];
   const problems = summarizeIssues(issues);
   if (problems.length > 0) {
