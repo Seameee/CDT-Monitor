@@ -10,6 +10,16 @@ function trafficClassOfRegion(regionId) {
   return "overseas";
 }
 
+// src/domain/models.ts
+function unverifiedDevice() {
+  return {
+    crossExecutionIntentClaim: false,
+    hostSerializesSameTarget: false,
+    verifiedAt: null,
+    note: null
+  };
+}
+
 // src/domain/schedule.ts
 var MINUTES_PER_DAY = 24 * 60;
 function normalizeClockTime(value) {
@@ -742,6 +752,9 @@ function emptyControlConfig() {
     // Everything below defaults to "off". Deleting the config is equivalent to
     // disabling it; there is no conflicting implicit switch.
     enabled: false,
+    // Attests nothing. There is deliberately no env variable, module default or
+    // code path that pre-fills this.
+    deviceVerification: unverifiedDevice(),
     credentialId: null,
     allowedInstanceIds: [],
     scopes: [],
@@ -821,6 +834,7 @@ function parseControlConfig(value, knownCredentialIds, knownInstanceIds, issues)
   const knownKeys = [
     "schemaVersion",
     "enabled",
+    "deviceVerification",
     "credentialId",
     "allowedInstanceIds",
     "scopes",
@@ -839,6 +853,67 @@ function parseControlConfig(value, knownCredentialIds, knownInstanceIds, issues)
     return config;
   }
   config.enabled = record["enabled"] === true;
+  const attestation = record["deviceVerification"];
+  if (attestation !== void 0) {
+    if (attestation === null || typeof attestation !== "object" || Array.isArray(attestation)) {
+      issues.error(
+        "CDT_CONTROL_JSON.deviceVerification",
+        "deviceVerification 必须是对象，控制保持关闭"
+      );
+      config.enabled = false;
+      return config;
+    }
+    const item = attestation;
+    const allowed2 = ["crossExecutionIntentClaim", "hostSerializesSameTarget", "verifiedAt", "note"];
+    for (const key of Object.keys(item)) {
+      if (!allowed2.includes(key)) {
+        issues.error(
+          "CDT_CONTROL_JSON.deviceVerification",
+          `deviceVerification 含未知字段 ${key}，控制保持关闭`
+        );
+        config.enabled = false;
+        return config;
+      }
+    }
+    for (const key of ["crossExecutionIntentClaim", "hostSerializesSameTarget"]) {
+      if (item[key] !== void 0 && typeof item[key] !== "boolean") {
+        issues.error(
+          "CDT_CONTROL_JSON.deviceVerification",
+          `${key} 必须是布尔值，控制保持关闭`
+        );
+        config.enabled = false;
+        return config;
+      }
+    }
+    const crossExecution = item["crossExecutionIntentClaim"] === true;
+    const serialises = item["hostSerializesSameTarget"] === true;
+    let verifiedAt = null;
+    if (item["verifiedAt"] !== void 0 && item["verifiedAt"] !== null) {
+      if (typeof item["verifiedAt"] !== "string" || !Number.isFinite(Date.parse(item["verifiedAt"]))) {
+        issues.error(
+          "CDT_CONTROL_JSON.deviceVerification.verifiedAt",
+          "verifiedAt 必须是合法的 ISO 8601 日期或时间，控制保持关闭"
+        );
+        config.enabled = false;
+        return config;
+      }
+      verifiedAt = item["verifiedAt"];
+    }
+    if ((crossExecution || serialises) && verifiedAt === null) {
+      issues.error(
+        "CDT_CONTROL_JSON.deviceVerification.verifiedAt",
+        "声明已通过真机验证时必须同时填写 verifiedAt，控制保持关闭"
+      );
+      config.enabled = false;
+      return config;
+    }
+    config.deviceVerification = {
+      crossExecutionIntentClaim: crossExecution,
+      hostSerializesSameTarget: serialises,
+      verifiedAt,
+      note: typeof item["note"] === "string" ? item["note"] : null
+    };
+  }
   const credentialId = record["credentialId"];
   if (credentialId !== void 0 && credentialId !== null) {
     if (typeof credentialId !== "string" || !knownCredentialIds.has(credentialId)) {
@@ -1124,6 +1199,13 @@ function parseConfig(env, view = readViewSelection(env)) {
     knownInstanceIds,
     issues
   );
+  if (mode === "server" && control.enabled) {
+    issues.error(
+      ENV_KEYS.controlJson,
+      "server 模式不提供本地云写控制（该模式没有云端凭据）；保活已关闭，请改用 direct 模式，或由 Go 后端执行实例操作"
+    );
+    control.enabled = false;
+  }
   const notifications = parseNotificationConfig(
     readJson(env, ENV_KEYS.notificationJson, issues),
     localNotify,
@@ -1514,6 +1596,26 @@ function prepareRuntime(ctx, budgetMs) {
   };
 }
 
+// src/services/control.ts
+function capabilityFromConfig(config) {
+  const attestation = config.control.deviceVerification;
+  return {
+    crossExecutionIntentClaim: attestation.crossExecutionIntentClaim === true,
+    hostSerializesSameTarget: attestation.hostSerializesSameTarget === true
+  };
+}
+function describeCapability(config) {
+  const attestation = config.control.deviceVerification;
+  const capability = capabilityFromConfig(config);
+  if (capability.crossExecutionIntentClaim && capability.hostSerializesSameTarget) {
+    return `已声明通过真机验证（${attestation.verifiedAt ?? "未注明时间"}）`;
+  }
+  const missing = [];
+  if (!capability.crossExecutionIntentClaim) missing.push("跨执行意图持久化");
+  if (!capability.hostSerializesSameTarget) missing.push("同目标串行执行");
+  return `未验证（缺少：${missing.join("、")}）`;
+}
+
 // src/entries/diagnostics.ts
 function detectGlobal(name) {
   try {
@@ -1632,7 +1734,8 @@ async function main(ctx) {
     `业务时区：${config.timezone}`,
     `账户 ${config.accounts.length} · 流量范围 ${config.trafficScopes.length} · 实例 ${config.instances.length}`,
     `AccessKey：${config.credentials.some((credential) => credential.accessKeySecret !== "") ? "已配置" : "未配置"}`,
-    `账单 ${config.billingEnabled ? "开" : "关"} · 本地通知 ${config.localNotify ? "开" : "关"} · 控制 ${config.control.enabled ? "开" : "关（默认）"}`
+    `账单 ${config.billingEnabled ? "开" : "关"} · 本地通知 ${config.localNotify ? "开" : "关"} · 控制 ${config.control.enabled ? "开" : "关（默认）"}`,
+    `写入能力：${describeCapability(config)}`
   ];
   const problems = summarizeIssues(issues);
   if (problems.length > 0) {

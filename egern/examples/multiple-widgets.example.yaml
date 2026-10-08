@@ -7,8 +7,8 @@
 #   - Module > Widget > Script 的优先级意味着：模块 env 会盖掉这里的设置。
 #     所以同一 Profile 里如果需要多个视图，请不要在模块引用处设置这些变量。
 #
-# 这里引用同一个模块两次会得到重复的脚本名，因此推荐做法是：
-#   只安装一份基础模块，然后在下面声明多个 widget，各自指向同一个 generic 脚本。
+# 模块只安装一份；多个视图通过声明多个 widget 实现，各自指向同一个 generic 脚本，
+# 再用 widget 自己的 env 选择要显示的范围与主题。
 
 modules:
   - url: "https://raw.githubusercontent.com/Seameee/CDT-Monitor/main/egern/dist/cdt-monitor.yaml"

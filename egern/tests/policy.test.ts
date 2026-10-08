@@ -26,18 +26,24 @@ import { createTimeZoneProvider } from "../src/domain/timezone.ts";
 import {
   NO_CONTROL_CAPABILITY,
   buildConsoleGuidance,
+  capabilityFromConfig,
+  describeCapability,
   executeControlIntent,
+  isControlVerified,
   isIntentConsumed,
 } from "../src/services/control.ts";
+import { parseConfig } from "../src/config/parse.ts";
 import { FakeControlProvider, fixedClock } from "./host-fake.ts";
 import {
   NOW,
   PROVEN,
+  attestedControlConfig,
   appConfig,
   cacheFor,
   controlConfig,
   instanceSnapshot,
   intent,
+  requestScope,
   scopeSnapshot,
   snapshot,
 } from "./fixtures.ts";
@@ -462,4 +468,85 @@ test("an unproven capability refuses even with a valid intent", async () => {
 test("the fixed clock helper is used so policy never reads wall time", () => {
   const clock = fixedClock("2026-10-08T12:00:00Z");
   assert.equal(clock.now().toISOString(), "2026-10-08T12:00:00.000Z");
+});
+
+/* ------------------- device attestation (opt-in write gate) --------------- */
+
+test("capability is closed by default and only opens on an explicit attestation", () => {
+  // Default: attests nothing.
+  assert.equal(capabilityFromConfig(appConfig()).crossExecutionIntentClaim, false);
+  assert.equal(isControlVerified(appConfig()), false);
+
+  // Only one of the two preconditions is not enough.
+  const half = appConfig({
+    control: controlConfig({
+      deviceVerification: {
+        crossExecutionIntentClaim: true,
+        hostSerializesSameTarget: false,
+        verifiedAt: "2026-10-09T00:00:00Z",
+        note: null,
+      },
+    }),
+  });
+  assert.equal(isControlVerified(half), false);
+
+  // Both, with a date, opens it.
+  assert.equal(isControlVerified(appConfig({ control: attestedControlConfig() })), true);
+  assert.ok(describeCapability(appConfig({ control: attestedControlConfig() })).includes("真机验证"));
+  assert.ok(describeCapability(appConfig()).includes("未验证"));
+});
+
+test("an attestation without a date is refused by configuration parsing", () => {
+  const outcome = parseConfig({
+    CDT_ACCESS_KEY_ID: "EXAMPLE_AK_ID",
+    CDT_ACCESS_KEY_SECRET: "EXAMPLE_SECRET",
+    CDT_CONTROL_JSON: JSON.stringify({
+      schemaVersion: 1,
+      enabled: true,
+      deviceVerification: {
+        crossExecutionIntentClaim: true,
+        hostSerializesSameTarget: true,
+      },
+    }),
+  });
+  assert.equal(outcome.ok, false);
+  assert.ok(outcome.issues.some((issue) => issue.field.includes("verifiedAt")));
+});
+
+test("an unknown field inside deviceVerification keeps control closed", () => {
+  const outcome = parseConfig({
+    CDT_ACCESS_KEY_ID: "EXAMPLE_AK_ID",
+    CDT_ACCESS_KEY_SECRET: "EXAMPLE_SECRET",
+    CDT_CONTROL_JSON: JSON.stringify({
+      schemaVersion: 1,
+      enabled: true,
+      deviceVerification: {
+        crossExecutionIntentClaim: true,
+        hostSerializesSameTarget: true,
+        verifiedAt: "2026-10-09T00:00:00Z",
+        trustMeBro: true,
+      },
+    }),
+  });
+  assert.equal(outcome.ok, false);
+  assert.ok(outcome.issues.some((issue) => issue.field.includes("deviceVerification")));
+});
+
+test("an attested capability actually lets a control intent execute", async () => {
+  const config = appConfig({ control: attestedControlConfig() });
+  const provider = new FakeControlProvider();
+  const outcome = await executeControlIntent({
+    intent: intent(),
+    snapshot: snapshot(),
+    config,
+    cache: cacheFor(config),
+    provider: provider as never,
+    capability: capabilityFromConfig(config),
+    scope: requestScope(),
+    now: NOW,
+  });
+  // This is the proof that the switch is wired through, not just documented.
+  assert.equal(outcome.executed, true);
+  assert.equal(outcome.code, "Accepted");
+  assert.equal(provider.stopped.length, 1);
 });

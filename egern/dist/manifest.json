@@ -1,19 +1,19 @@
 {
   "name": "cdt-monitor-egern",
   "version": "0.1.0",
-  "commit": "ad152f04efccf1093e791a8a839d7a3fa64527d1",
+  "commit": null,
   "ref": "main",
   "repoSlug": "Seameee/CDT-Monitor",
   "releaseBaseUrl": "https://raw.githubusercontent.com/Seameee/CDT-Monitor/main/egern/dist",
-  "generatedAt": "2026-10-07T23:59:25.200Z",
+  "generatedAt": "2026-10-08T00:34:48.000Z",
   "esbuildTarget": "es2020",
   "minified": false,
   "scripts": [
     {
       "name": "cdt-widget.js",
       "kind": "read",
-      "bytes": 146782,
-      "sha256": "d455f803cbec8047c40f66bc7e204fddedaaee12254633f004750a7ba3f545de",
+      "bytes": 149757,
+      "sha256": "8c36e11e2c85325f7083927cbc3e5085ed96508548a58dd978c48fc364880a3f",
       "inputs": [
         "src/host/types.ts",
         "src/domain/models.ts",
@@ -49,8 +49,8 @@
     {
       "name": "cdt-refresh.js",
       "kind": "read",
-      "bytes": 121939,
-      "sha256": "2cc8c086e104aede44e44f5162aa200f81457bda58ac5f40e6c9c21ed62526b3",
+      "bytes": 124914,
+      "sha256": "5b21f4983f304c6e9e0c557a344f8ba7cf1a38578ea87cb1d0f5eed0ce358706",
       "inputs": [
         "src/domain/usage.ts",
         "src/domain/models.ts",
@@ -82,13 +82,13 @@
     {
       "name": "cdt-diagnostics.js",
       "kind": "read",
-      "bytes": 56034,
-      "sha256": "fd82c1e45065eb4d5b3de9d0a6eaee5b32e9ecf828137758f1c660358eebd551",
+      "bytes": 59966,
+      "sha256": "09d955bacb26e31e5217ec15fe7c8aaf8414d0d731a7e1de1793af958ce00af6",
       "inputs": [
         "src/domain/usage.ts",
+        "src/domain/models.ts",
         "src/domain/schedule.ts",
         "src/host/crypto.ts",
-        "src/domain/models.ts",
         "src/providers/types.ts",
         "src/providers/cdt-server.ts",
         "src/config/env.ts",
@@ -105,14 +105,16 @@
         "src/providers/aliyun/direct.ts",
         "src/services/cache.ts",
         "src/entries/runtime.ts",
+        "src/domain/policy.ts",
+        "src/services/control.ts",
         "src/entries/diagnostics.ts"
       ]
     },
     {
       "name": "cdt-control.js",
       "kind": "write",
-      "bytes": 125023,
-      "sha256": "e9279508157c3ea7331e257e959c46b6ff0f874703ae4041ef22fc7db63d9b91",
+      "bytes": 128172,
+      "sha256": "e7400f627fce09da6aa99ecc9fbbbcbe12ef7c267445bb37ad95f0e473dca38c",
       "inputs": [
         "src/domain/models.ts",
         "src/services/cache.ts",
@@ -145,8 +147,8 @@
     {
       "name": "cdt-automation.js",
       "kind": "write",
-      "bytes": 135684,
-      "sha256": "b8af95c7d6b94bd478cc5cea26062b0093008f808146b9c0c916221eb696908f",
+      "bytes": 140780,
+      "sha256": "02b1628c451dde4bedaef243ac01b6ce41a199b0b1e5454439b37f9117e0c5ce",
       "inputs": [
         "src/domain/models.ts",
         "src/domain/schedule.ts",
@@ -174,25 +176,16 @@
         "src/providers/aliyun/billing.ts",
         "src/providers/aliyun/direct.ts",
         "src/entries/runtime.ts",
+        "src/providers/aliyun/control.ts",
         "src/entries/automation.ts"
       ]
     }
   ],
   "modules": [
     {
-      "name": "cdt-monitor-control.yaml",
-      "bytes": 2399,
-      "sha256": "ba089b1595637d7f86fff105ae10e03423c3665953d163d158e7f4d35ca9f6aa"
-    },
-    {
-      "name": "cdt-monitor-server.yaml",
-      "bytes": 3396,
-      "sha256": "79f24d7e80def1e54eb86251be368bbe2a1ea8c7e03d0add9659330fdaa1b93e"
-    },
-    {
       "name": "cdt-monitor.yaml",
-      "bytes": 4225,
-      "sha256": "fa08b9f709fb3f0d3b944b3437908b424dd813f3b3a83784c381d30bddc35569"
+      "bytes": 8613,
+      "sha256": "5756d79bae8009bcd4147c9ebc9d148abe79a3eb153e474e9397045cf271c448"
     }
   ]
 }

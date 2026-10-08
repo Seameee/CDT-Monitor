@@ -4,6 +4,14 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key !== "sy
 
 // src/domain/models.ts
 var UNVERIFIED_PERIOD = "unverified";
+function unverifiedDevice() {
+  return {
+    crossExecutionIntentClaim: false,
+    hostSerializesSameTarget: false,
+    verifiedAt: null,
+    note: null
+  };
+}
 var SNAPSHOT_SCHEMA_VERSION = 1;
 var MAX_HOURLY_SAMPLES = 48;
 var MAX_DAILY_SAMPLES = 35;
@@ -854,10 +862,13 @@ function validateControlIntent(intent, snapshot, config, now, alreadyConsumed) {
 }
 
 // src/services/control.ts
-var NO_CONTROL_CAPABILITY = {
-  crossExecutionIntentClaim: false,
-  hostSerializesSameTarget: false
-};
+function capabilityFromConfig(config) {
+  const attestation = config.control.deviceVerification;
+  return {
+    crossExecutionIntentClaim: attestation.crossExecutionIntentClaim === true,
+    hostSerializesSameTarget: attestation.hostSerializesSameTarget === true
+  };
+}
 function isIntentConsumed(cache, nonce) {
   return cache.read(nonce, "intent-consumed", (value) => value === true) === true;
 }
@@ -2083,6 +2094,9 @@ function emptyControlConfig() {
     // Everything below defaults to "off". Deleting the config is equivalent to
     // disabling it; there is no conflicting implicit switch.
     enabled: false,
+    // Attests nothing. There is deliberately no env variable, module default or
+    // code path that pre-fills this.
+    deviceVerification: unverifiedDevice(),
     credentialId: null,
     allowedInstanceIds: [],
     scopes: [],
@@ -2162,6 +2176,7 @@ function parseControlConfig(value, knownCredentialIds, knownInstanceIds, issues)
   const knownKeys = [
     "schemaVersion",
     "enabled",
+    "deviceVerification",
     "credentialId",
     "allowedInstanceIds",
     "scopes",
@@ -2180,6 +2195,67 @@ function parseControlConfig(value, knownCredentialIds, knownInstanceIds, issues)
     return config;
   }
   config.enabled = record["enabled"] === true;
+  const attestation = record["deviceVerification"];
+  if (attestation !== void 0) {
+    if (attestation === null || typeof attestation !== "object" || Array.isArray(attestation)) {
+      issues.error(
+        "CDT_CONTROL_JSON.deviceVerification",
+        "deviceVerification 必须是对象，控制保持关闭"
+      );
+      config.enabled = false;
+      return config;
+    }
+    const item = attestation;
+    const allowed2 = ["crossExecutionIntentClaim", "hostSerializesSameTarget", "verifiedAt", "note"];
+    for (const key of Object.keys(item)) {
+      if (!allowed2.includes(key)) {
+        issues.error(
+          "CDT_CONTROL_JSON.deviceVerification",
+          `deviceVerification 含未知字段 ${key}，控制保持关闭`
+        );
+        config.enabled = false;
+        return config;
+      }
+    }
+    for (const key of ["crossExecutionIntentClaim", "hostSerializesSameTarget"]) {
+      if (item[key] !== void 0 && typeof item[key] !== "boolean") {
+        issues.error(
+          "CDT_CONTROL_JSON.deviceVerification",
+          `${key} 必须是布尔值，控制保持关闭`
+        );
+        config.enabled = false;
+        return config;
+      }
+    }
+    const crossExecution = item["crossExecutionIntentClaim"] === true;
+    const serialises = item["hostSerializesSameTarget"] === true;
+    let verifiedAt = null;
+    if (item["verifiedAt"] !== void 0 && item["verifiedAt"] !== null) {
+      if (typeof item["verifiedAt"] !== "string" || !Number.isFinite(Date.parse(item["verifiedAt"]))) {
+        issues.error(
+          "CDT_CONTROL_JSON.deviceVerification.verifiedAt",
+          "verifiedAt 必须是合法的 ISO 8601 日期或时间，控制保持关闭"
+        );
+        config.enabled = false;
+        return config;
+      }
+      verifiedAt = item["verifiedAt"];
+    }
+    if ((crossExecution || serialises) && verifiedAt === null) {
+      issues.error(
+        "CDT_CONTROL_JSON.deviceVerification.verifiedAt",
+        "声明已通过真机验证时必须同时填写 verifiedAt，控制保持关闭"
+      );
+      config.enabled = false;
+      return config;
+    }
+    config.deviceVerification = {
+      crossExecutionIntentClaim: crossExecution,
+      hostSerializesSameTarget: serialises,
+      verifiedAt,
+      note: typeof item["note"] === "string" ? item["note"] : null
+    };
+  }
   const credentialId = record["credentialId"];
   if (credentialId !== void 0 && credentialId !== null) {
     if (typeof credentialId !== "string" || !knownCredentialIds.has(credentialId)) {
@@ -2465,6 +2541,13 @@ function parseConfig(env, view = readViewSelection(env)) {
     knownInstanceIds,
     issues
   );
+  if (mode === "server" && control.enabled) {
+    issues.error(
+      ENV_KEYS.controlJson,
+      "server 模式不提供本地云写控制（该模式没有云端凭据）；保活已关闭，请改用 direct 模式，或由 Go 后端执行实例操作"
+    );
+    control.enabled = false;
+  }
   const notifications = parseNotificationConfig(
     readJson(env, ENV_KEYS.notificationJson, issues),
     localNotify,
@@ -3642,7 +3725,7 @@ async function main(ctx) {
     });
     snapshot = collected.snapshot;
   }
-  const capability = NO_CONTROL_CAPABILITY;
+  const capability = capabilityFromConfig(config);
   const provider = capability.crossExecutionIntentClaim && capability.hostSerializesSameTarget ? new DirectControlProvider(createRpcDependencies(runtime)) : null;
   const outcome = await executeControlIntent({
     intent: intentResult.intent,

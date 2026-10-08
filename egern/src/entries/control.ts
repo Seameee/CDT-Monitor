@@ -22,8 +22,8 @@ import type { ControlIntent, ShutdownMode } from "../domain/models.ts";
 import { loadSnapshotFromCache } from "../services/cache.ts";
 import { collectSnapshot } from "../services/collect.ts";
 import {
-  NO_CONTROL_CAPABILITY,
   buildConsoleGuidance,
+  capabilityFromConfig,
   executeControlIntent,
 } from "../services/control.ts";
 import { createRpcDependencies, createProvider, prepareRuntime, WIDGET_BUDGET_MS } from "./runtime.ts";
@@ -129,9 +129,9 @@ export default async function main(ctx: EgernScriptContext): Promise<unknown> {
     snapshot = collected.snapshot;
   }
 
-  // The capability gate is closed unless a device test has proven both
-  // preconditions; see services/control.ts.
-  const capability = NO_CONTROL_CAPABILITY;
+  // The capability gate is closed unless the user has explicitly attested both
+  // preconditions in CDT_CONTROL_JSON; see services/control.ts.
+  const capability = capabilityFromConfig(config);
   const provider = capability.crossExecutionIntentClaim && capability.hostSerializesSameTarget
     ? new DirectControlProvider(createRpcDependencies(runtime))
     : null;

@@ -65,6 +65,38 @@ function readJson(path) {
 }
 
 /**
+ * A deterministic build timestamp.
+ *
+ * Using the wall clock here made `manifest.json` differ on every build even when
+ * the sources were identical, so a committed `dist/` could never match a rebuild
+ * and any artifact-hash check was meaningless.
+ *
+ * Resolution order: SOURCE_DATE_EPOCH (the reproducible-builds convention), then
+ * the commit's **author** date, then the clock. The author date is used rather
+ * than the committer date because `git commit --amend` preserves the author date
+ * but rewrites the committer date; keying on the latter would make the manifest
+ * change on every amend and never converge.
+ */
+function resolveGeneratedAt() {
+  const epoch = process.env["SOURCE_DATE_EPOCH"];
+  if (epoch !== undefined && /^\d+$/.test(epoch)) {
+    return new Date(Number(epoch) * 1000).toISOString();
+  }
+  try {
+    const committed = execFileSync("git", ["log", "-1", "--format=%aI"], {
+      cwd: root,
+      encoding: "utf8",
+    }).trim();
+    if (committed !== "" && Number.isFinite(Date.parse(committed))) {
+      return new Date(committed).toISOString();
+    }
+  } catch {
+    // Not a git checkout; fall through.
+  }
+  return new Date().toISOString();
+}
+
+/**
  * Derive `owner/repo` from the `origin` remote.
  *
  * A fork must publish URLs that point at **itself**, not at the repository it
@@ -116,9 +148,9 @@ function detectRef(commit) {
 /** Revision metadata used for the release URL and the manifest. */
 function resolveRevision() {
   const pkg = readJson(join(root, "package.json"));
-  let commit = "unknown";
+  let head = "unknown";
   try {
-    commit = execFileSync("git", ["rev-parse", "HEAD"], {
+    head = execFileSync("git", ["rev-parse", "HEAD"], {
       cwd: root,
       encoding: "utf8",
     }).trim();
@@ -126,11 +158,25 @@ function resolveRevision() {
     // Not a git checkout (e.g. a source tarball). The manifest records this.
   }
   const repoSlug = detectRepoSlug();
-  const ref = detectRef(commit);
+  const ref = detectRef(head);
   const baseUrl =
     process.env["CDT_RELEASE_BASE_URL"] ||
     `https://raw.githubusercontent.com/${repoSlug}/${ref}/egern/dist`;
-  return { version: pkg.version, commit, ref, repoSlug, baseUrl: baseUrl.replace(/\/+$/, "") };
+  // The commit that produced these artifacts, supplied by CI.
+  //
+  // It cannot be discovered locally: a build cannot name the commit that will
+  // contain it, so reading HEAD here made `manifest.json` differ from every
+  // rebuild and left the tree permanently dirty. CI knows the commit from its
+  // own context and stamps it into a published (not committed) artifact.
+  const sourceCommit = process.env["CDT_SOURCE_COMMIT"] || null;
+  return {
+    version: pkg.version,
+    commit: sourceCommit,
+    head,
+    ref,
+    repoSlug,
+    baseUrl: baseUrl.replace(/\/+$/, ""),
+  };
 }
 
 function sha256(text) {
@@ -198,7 +244,7 @@ async function main() {
     ref: revision.ref,
     repoSlug: revision.repoSlug,
     releaseBaseUrl: revision.baseUrl,
-    generatedAt: new Date().toISOString(),
+    generatedAt: resolveGeneratedAt(),
     esbuildTarget: TARGET,
     minified: process.env["CDT_MINIFY"] === "1",
     scripts,

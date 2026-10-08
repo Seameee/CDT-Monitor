@@ -202,12 +202,15 @@ GET /monitor.php?key=<具有 cron:run scope 的 API Key>
 仓库中的 [`egern/`](egern/README.md) 是 Egern 代理 App 的脚本插件：安装一个 YAML 模块后，
 可在 iOS 桌面与锁屏显示原生小组件，**默认无需自建服务器**。
 
-两种模式：
+**只安装一个模块**（`egern/dist/cdt-monitor.yaml`），数据源用 `CDT_MODE` 选择：
 
-| 模式 | 模块 | 数据来源 | 说明 |
+| 模式 | `CDT_MODE` | 数据来源 | 说明 |
 | --- | --- | --- | --- |
-| 直连 | `egern/dist/cdt-monitor.yaml` | 手机直接调用阿里云只读接口 | 默认方案；只需一份只读 RAM 凭据 |
-| 服务器 | `egern/dist/cdt-monitor-server.yaml` | 本项目的 Go 服务只读 API | 复用既有调度与历史；只需 `widget:read` Key |
+| 直连 | `direct`（默认） | 手机直接调用阿里云只读接口 | 只需一份只读 RAM 凭据 |
+| 服务器 | `server` | 本项目的 Go 服务只读 API | 复用既有调度与历史；只需 `widget:read` Key |
+
+同一个模块还包含可选的实例保活，默认**不生效**：需要在 `CDT_CONTROL_JSON` 里显式开启并声明
+已在真机验证。详见 [`egern/README.md`](egern/README.md)。
 
 边界说明：
 

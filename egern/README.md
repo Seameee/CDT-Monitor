@@ -26,11 +26,14 @@
 
 ### 2. 添加模块
 
-在 Egern 的 **工具 → 模块** 中新增：
+在 Egern 的 **工具 → 模块** 中新增**一个**地址即可：
 
 ```text
 https://raw.githubusercontent.com/Seameee/CDT-Monitor/main/egern/dist/cdt-monitor.yaml
 ```
+
+这**一个模块**已包含全部能力：小组件、定时采集、诊断、通知，以及可选的实例保活。
+数据源用 `CDT_MODE` 选择（`direct` 直连阿里云 / `server` 读自建 Go 服务），不需要装第二个模块。
 
 > 上面是**本仓库**（`Seameee/CDT-Monitor`）的地址，由构建时依据 `origin` 远端生成。
 > 如果你把代码放到了别处，请替换成你自己的仓库地址；
@@ -106,9 +109,11 @@ https://raw.githubusercontent.com/Seameee/CDT-Monitor/main/egern/dist/cdt-monito
 
 ### 服务器模式
 
-如果已经运行 CDT-Monitor Go 服务，可以改用
-`dist/cdt-monitor-server.yaml`，只需 `CDT_BASE_URL` 与 `CDT_READ_TOKEN`
-（`widget:read` 权限），不需要云凭据。
+把 `CDT_MODE` 设为 `server`，再填 `CDT_BASE_URL` 与 `CDT_READ_TOKEN`
+（`widget:read` 权限）即可，**不需要云凭据**。同一个模块，无需另装。
+
+注意：`server` 模式下本地实例保活**不可用**（该模式没有云端凭据），
+若配置了 `CDT_CONTROL_JSON.enabled=true` 会明确报错并保持关闭。
 
 **v1 新鲜度限制（重要）**：Go v1 接口返回的 `updated_at` / `last_updated` 是**入队时间**，
 也会被控制动作和成功查询刷新，**不是云端采样时间**。因此：
@@ -117,16 +122,58 @@ https://raw.githubusercontent.com/Seameee/CDT-Monitor/main/egern/dist/cdt-monito
 - 该数据**不能**作为本地自动控制的新鲜度依据（代码层面已阻止）；
 - `flow_used` / `flow_total` 实际按 **GiB** 存储但被标为 GB，本插件按 GiB 换算成字节再比较。
 
-### 实例开关机（默认关闭）
+### 实例保活与开关机（默认关闭，可自行开启）
 
-本地启停**默认完全关闭**，并且需要先在真机证明两个前提（跨执行意图持久化、同目标串行执行）。
-在此之前：
+**默认不会自动拉起任何机器。** 云写操作要真正执行，必须由你在 `CDT_CONTROL_JSON` 里显式声明；
+安装模块本身不会启用任何东西——脚本会加载，但在 `enabled=false` 时**立刻返回，连状态都不读**
+（有测试断言此时 HTTP 请求数为 0）。
 
-- `cdt-control.js` 只校验意图并给出拒绝原因，**不执行任何云写操作**；
-- `cdt-automation.js` 只评估策略、发送通知，并记录被扣下的动作；
-- 请通过云控制台完成启停。
+保活需要向阿里云发写请求，因此只在 `CDT_MODE=direct` 下可用，且**同一个 AccessKey 必须同时具备**
+CDT 只读权限与目标实例的 `StartInstance`/`StopInstance` 权限。
 
-启用步骤与限制见 [兼容性记录](docs/compatibility.md) 第 3 节。
+| 闸门 | 默认 | 行为 |
+| --- | --- | --- |
+| 脚本是否加载 | 已加载，但完全惰性 | 无 `CDT_CONTROL_JSON` 时零网络请求 |
+| `enabled` | `false` | 为 false 时直接返回，不评估、不读取 |
+| `deviceVerification` 两项 | `false` | 未自证时只评估、只记录拒绝原因，**绝不**发 Start/Stop |
+
+**开启保活的最小配置**（写入 `CDT_CONTROL_JSON`）：
+
+```json
+{
+  "schemaVersion": 1,
+  "enabled": true,
+  "deviceVerification": {
+    "crossExecutionIntentClaim": true,
+    "hostSerializesSameTarget": true,
+    "verifiedAt": "2026-10-09",
+    "note": "iPhone 15 / Egern x.y.z"
+  },
+  "credentialId": "cred-main",
+  "allowedInstanceIds": ["instance-main"],
+  "instances": [
+    {
+      "instanceId": "instance-main",
+      "keepAlive": true,
+      "scheduleControlEnabled": false,
+      "shutdownMode": "KeepCharging"
+    }
+  ]
+}
+```
+
+`deviceVerification` 是**你对自己设备的验证声明**，不是代码能替你确认的事：声明前请先完成
+[兼容性记录 §3](docs/compatibility.md) 的两个真机探针；`verifiedAt` 为必填（缺了会被拒绝，
+以免出现没有日期的"验证记录"）。任何未知字段都会让控制保持关闭。
+
+保活的触发条件（**全部满足**才会下发开机）：实例确认为 `Stopped` · 未超流量阈值 ·
+在配置的允许时段内 · 未被 `pauseUntil` 暂停 · 不在动作冷却期内。`Unknown` 状态一律先查询、不猜。
+
+> ⚠️ **可靠性限制（必读）**：iOS 不保证定时脚本被唤醒。机器停机后脚本要等系统给机会才跑，
+> 可能几分钟，也可能拖到你下次打开 Egern。**因此 Egern 的保活是"最佳努力"，不能当作可靠保活。**
+> 要求"停机后尽快拉起"，请使用 Go 后端的常驻保活。
+
+一个一次性手动动作（不是自动保活）则填 `CDT_CONTROL_INTENT_JSON`，执行后请立即清空。
 
 ---
 

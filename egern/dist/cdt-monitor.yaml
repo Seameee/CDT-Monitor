@@ -1,26 +1,61 @@
 name: "CDT Monitor"
-description: "阿里云 CDT 流量与 ECS 状态只读小组件（直连模式，无需服务器）"
+description: "阿里云 CDT 流量与 ECS 状态小组件；支持直连/服务器两种数据源，并可选实例保活"
 author: "青柠 (wang4386)"
 homepage: "https://github.com/wang4386/CDT-Monitor"
 manual: "https://github.com/wang4386/CDT-Monitor/blob/main/egern/README.md"
 icon: "chart.bar.fill"
 
-# 同一 Profile 安装多份本模块时，把 MODULE_ID 改成不同的非秘密值；
-# 它用于让脚本与 widget 名称保持唯一。
+# 这是一个自包含模块：监控、通知、诊断、以及可选的实例保活都在这里。
+#
+# 数据源由 CDT_MODE 选择：
+#   direct  → 手机直接调用阿里云只读接口（默认）
+#   server  → 读取自建 CDT-Monitor Go 服务的只读 API
+#
+# ⚠️ 安装本模块不会开启任何云写操作。
+# 保活要真正执行，必须同时满足三层，且全部由你自己显式填写在 CDT_CONTROL_JSON 里：
+#   1. enabled = true
+#   2. deviceVerification 的两个自证项都为 true，并填写 verifiedAt
+#   3. 指明 credentialId、allowedInstanceIds 与目标实例策略
+# 只满足部分条件时，脚本只会记录「被扣下的动作 / 拒绝原因」，不会开机或关机。
+#
+# 另外：保活需要云端凭据，因此仅在 direct 模式下可用；server 模式下控制会保持关闭。
+
 compat_arguments:
   MODULE_ID: "main"
 compat_arguments_desc: "同一 Profile 安装多份时设置不同的非秘密 MODULE_ID；仅字母、数字、下划线和连字符"
 
 env_schema:
+  CDT_MODE:
+    name: "数据源"
+    description: "direct = 手机直连阿里云（默认，需要下面的 AccessKey）；server = 读取自建 Go 服务的只读 API（改用 CDT_BASE_URL / CDT_READ_TOKEN）。"
+    default_value: "direct"
+    options: ["direct", "server"]
+
+  # ---- direct 模式 ----
   CDT_ACCESS_KEY_ID:
     name: "AccessKey ID"
-    description: "本地填写。建议使用只读 RAM 用户，仅授予 CDT 查询与（可选的）ECS 查询权限。分享配置前请移除。"
+    description: "本地填写。建议使用只读 RAM 用户。注意：若开启保活，该凭据还需要目标实例的 StartInstance/StopInstance 权限。分享配置前请移除。"
   CDT_ACCESS_KEY_SECRET:
     name: "AccessKey Secret"
     description: "只保存在你的 Egern 配置中，不要写进任何公开文件或截图。"
   CDT_SECURITY_TOKEN:
     name: "STS SecurityToken（可选）"
-    description: "仅在使用临时凭据时需要填写；过期后需重新配置。"
+    description: "仅在使用临时凭据时需要；过期后需重新配置。"
+
+  # ---- server 模式 ----
+  CDT_BASE_URL:
+    name: "服务器地址（server 模式）"
+    description: "CDT-Monitor 服务的 HTTPS 基础地址，例如 https://cdt.example.com。可带反向代理子路径；不要包含用户名、密码、查询串或片段。"
+  CDT_READ_TOKEN:
+    name: "只读 API Key（server 模式）"
+    description: "在服务端「设置 → API Key」创建，只需要 widget:read 权限。Token 不会出现在 URL 中。"
+  CDT_ALLOW_INSECURE_HTTP:
+    name: "允许本机 HTTP 调试"
+    description: "仅在服务器运行于本机、且你明确接受明文传输 Token 时才开启。默认关闭。"
+    default_value: "false"
+    options: ["true", "false"]
+
+  # ---- 监控对象 ----
   CDT_SITE_TYPE:
     name: "账户站点"
     description: "选择 BSS 端点与币种。它不决定流量按国内还是海外归类。"
@@ -31,8 +66,8 @@ env_schema:
     description: "用于推导流量分类与 ECS 端点。香港一律按海外流量归类。"
     default_value: "cn-hongkong"
   CDT_INSTANCE_ID:
-    name: "实例 ID（可选）"
-    description: "填写 i-xxxx 后才会查询并显示该实例状态；留空则只监控账号流量。"
+    name: "实例 ID"
+    description: "填写 i-xxxx 后才会查询并显示该实例状态；留空则只监控账号流量。保活必须填写。"
   CDT_NAME:
     name: "显示名称"
     default_value: "CDT"
@@ -51,12 +86,14 @@ env_schema:
     options: ["auto", "mainland", "overseas"]
   CDT_THRESHOLD_PERCENT:
     name: "告警阈值(%)"
-    description: "取值 (0,100]。仅用于显示与通知，直连只读模式不会因此停机。"
+    description: "取值 (0,100]。只读模式下仅用于显示与通知。"
     default_value: "95"
   CDT_REFRESH_SECONDS:
     name: "本地缓存秒数"
     description: "小组件读取本地缓存的有效期，也是 refreshAfter 的意图值；不是采集 cron。"
     default_value: "900"
+
+  # ---- 通知与账单 ----
   CDT_BILLING_ENABLED:
     name: "查询余额和账单"
     description: "默认关闭。启用后需要 BSS 只读权限，余额与实例账单各自缓存 6 小时。"
@@ -76,24 +113,68 @@ env_schema:
     default_value: "false"
     options: ["true", "false"]
 
+  # ---- 实例控制（默认不生效）----
+  CDT_CONTROL_JSON:
+    name: "控制策略（JSON，可留空）"
+    description: |
+      留空 = 控制完全关闭，不会有任何开机/关机动作。开启保活的示例：
+      {"schemaVersion":1,"enabled":true,
+       "deviceVerification":{"crossExecutionIntentClaim":true,"hostSerializesSameTarget":true,"verifiedAt":"2026-01-01"},
+       "credentialId":"cred-main","allowedInstanceIds":["instance-main"],
+       "instances":[{"instanceId":"instance-main","keepAlive":true,"scheduleControlEnabled":false,"shutdownMode":"KeepCharging"}]}
+      两个 deviceVerification 自证项表示你已在真机确认：①一次性意图能被跨执行记住；②同一目标的运行不会并发冲突。
+      未验证请留空。任何未知字段都会导致控制保持关闭。保活仅在 direct 模式可用。
+  CDT_CONTROL_INTENT_JSON:
+    name: "一次性控制意图（JSON，可留空）"
+    description: "临时填写本次要执行的唯一意图（含 nonce、issuedAt、expiresAt），执行后立即清空。长期固定变量不作为授权。"
+
+  # ---- 高级 ----
+  CDT_ACCOUNTS_JSON:
+    name: "多账号配置（JSON，高级）"
+    description: "填写后简单模式的 AccessKey 字段会被忽略（不是合并），以免同一账号被重复计数。示例见仓库 examples/。"
+  CDT_NOTIFICATION_JSON:
+    name: "通知配置（JSON，高级）"
+    description: "可选 Telegram / Webhook / 日报。Bot Token 只从 CDT_TELEGRAM_BOT_TOKEN 读取，不要写在这里。"
+  CDT_TELEGRAM_BOT_TOKEN:
+    name: "Telegram Bot Token（可选）"
+
 scriptings:
+  # 只读：小组件渲染
   - generic:
       name: "cdt-{{{MODULE_ID}}}-widget"
       script_url: "https://raw.githubusercontent.com/Seameee/CDT-Monitor/main/egern/dist/cdt-widget.js"
       timeout: 20
       update_interval: 86400
+  # 只读：脱敏诊断
   - generic:
       name: "cdt-{{{MODULE_ID}}}-diagnostics"
       script_url: "https://raw.githubusercontent.com/Seameee/CDT-Monitor/main/egern/dist/cdt-diagnostics.js"
       timeout: 20
       update_interval: 86400
+  # 只读：定时采集 / 通知 / 历史
   - schedule:
       name: "cdt-{{{MODULE_ID}}}-refresh"
       cron: "*/15 * * * *"
       script_url: "https://raw.githubusercontent.com/Seameee/CDT-Monitor/main/egern/dist/cdt-refresh.js"
       timeout: 30
       update_interval: 86400
+  # 控制（默认不生效）：一次性手动意图
+  - generic:
+      name: "cdt-{{{MODULE_ID}}}-manual"
+      script_url: "https://raw.githubusercontent.com/Seameee/CDT-Monitor/main/egern/dist/cdt-control.js"
+      timeout: 20
+      update_interval: 86400
+  # 控制（默认不生效）：策略评估 / 保活。
+  # 5 分钟一次是为了覆盖 10 分钟的调度补偿窗，与采集的 15 分钟周期分开。
+  # 注意：这只是「每 5 分钟尝试一次」，iOS 不保证按时唤醒。
+  - schedule:
+      name: "cdt-{{{MODULE_ID}}}-automation"
+      cron: "*/5 * * * *"
+      script_url: "https://raw.githubusercontent.com/Seameee/CDT-Monitor/main/egern/dist/cdt-automation.js"
+      timeout: 30
+      update_interval: 86400
 
 widgets:
+  # 控制脚本有意不关联任何 widget，避免小组件渲染触达控制路径。
   - name: "CDT Monitor {{{MODULE_ID}}}"
     script_name: "cdt-{{{MODULE_ID}}}-widget"

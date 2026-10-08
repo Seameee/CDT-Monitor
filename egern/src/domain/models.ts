@@ -180,6 +180,43 @@ export interface InstanceControlPolicy {
 }
 
 /**
+ * A user's explicit, self-attested record that the two preconditions for local
+ * instance control were verified **on a real device**.
+ *
+ * This is an attestation, not proof: nothing offline can verify it. It is
+ * therefore its own named field, so that enabling a cloud write is always a
+ * conscious act with a recorded date — never an incidental side effect of
+ * flipping something unrelated. Both flags default to `false`, and neither the
+ * module nor the code ever sets them.
+ */
+export interface DeviceVerificationAttestation {
+  /**
+   * The user verified that a one-shot intent's "consumed" marker survives
+   * across separate script executions.
+   */
+  crossExecutionIntentClaim: boolean;
+  /**
+   * The user verified that the host reliably serialises runs targeting the same
+   * instance (or that the cloud action is genuinely idempotent).
+   */
+  hostSerializesSameTarget: boolean;
+  /** When the verification was performed. Required once either flag is true. */
+  verifiedAt: string | null;
+  /** What was observed (device, Egern version, result). For the audit trail. */
+  note: string | null;
+}
+
+/** A device-verification record that asserts nothing. */
+export function unverifiedDevice(): DeviceVerificationAttestation {
+  return {
+    crossExecutionIntentClaim: false,
+    hostSerializesSameTarget: false,
+    verifiedAt: null,
+    note: null,
+  };
+}
+
+/**
  * Separate control configuration. Only the control/automation entries read
  * this; widget and refresh must ignore it entirely.
  */
@@ -187,6 +224,8 @@ export interface ControlConfig {
   schemaVersion: number;
   /** Master switch. Absent configuration means disabled. */
   enabled: boolean;
+  /** Self-attested device verification. Both flags required before any write. */
+  deviceVerification: DeviceVerificationAttestation;
   /** Credential explicitly chosen for write operations. */
   credentialId: string | null;
   /** Explicit instance allow-list. Empty means "no target". */

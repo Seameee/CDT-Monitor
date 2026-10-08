@@ -40,6 +40,7 @@ function problem(message) {
  * build rather than shipping a misleading placeholder.
  */
 const CODE_DEFAULTS = {
+  CDT_MODE: "direct",
   CDT_NAME: "CDT",
   CDT_QUOTA_UNIT: "GB",
   CDT_SITE_TYPE: "china",
@@ -52,7 +53,6 @@ const CODE_DEFAULTS = {
   CDT_TIMEZONE: "Asia/Shanghai",
   CDT_DEBUG: "false",
   CDT_ALLOW_INSECURE_HTTP: "false",
-  CDT_SITE_TYPE_SERVER: "china",
 };
 
 /** Every environment variable this plugin understands. */
@@ -100,8 +100,13 @@ if (!existsSync(distDir)) {
     problem("dist/manifest.json 缺失");
   } else {
     const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
-    if (typeof manifest.commit !== "string" || manifest.commit === "") {
-      problem("manifest.json 缺少 commit");
+    // `commit` is stamped by CI (CDT_SOURCE_COMMIT). A local build cannot know
+    // it, so null is expected and only a malformed value is an error.
+    if (manifest.commit !== null && typeof manifest.commit !== "string") {
+      problem("manifest.json 的 commit 既不是字符串也不是 null");
+    }
+    if (manifest.commit === null) {
+      notes.push("manifest.json 未记录 commit（本地构建正常；CI 会通过 CDT_SOURCE_COMMIT 写入）");
     }
     if (typeof manifest.releaseBaseUrl !== "string" || manifest.releaseBaseUrl === "") {
       problem("manifest.json 缺少 releaseBaseUrl");

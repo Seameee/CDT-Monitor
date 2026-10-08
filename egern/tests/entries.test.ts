@@ -105,6 +105,78 @@ test("C01: the automation entry does nothing at all while control is disabled", 
   assert.equal(fake.requests.length, 0);
 });
 
+/** Emulate a stopped instance, so a keep-alive decision is actually produced. */
+function stoppedResponder(request: RecordedRequest): { status: number; body: string } {
+  const action = request.form?.["Action"] ?? "";
+  if (action === "ListCdtInternetTraffic") {
+    return {
+      status: 200,
+      body: JSON.stringify({
+        RequestId: "r",
+        TrafficDetails: [{ BusinessRegionId: "cn-hongkong", Traffic: 1_073_741_824 }],
+      }),
+    };
+  }
+  if (action === "DescribeInstanceStatus") {
+    return {
+      status: 200,
+      body: JSON.stringify({
+        InstanceStatuses: { InstanceStatus: [{ InstanceId: "i-example", Status: "Stopped" }] },
+      }),
+    };
+  }
+  return { status: 400, body: JSON.stringify({ Code: "UnexpectedAction", Message: action }) };
+}
+
+test("keep-alive is evaluated but issues zero StartInstance calls while capability is unproven", async () => {
+  const fake = createFakeContext({
+    env: baseEnv({
+      // Control fully enabled, allow-list satisfied, keep-alive explicitly on.
+      CDT_CONTROL_JSON: JSON.stringify({
+        schemaVersion: 1,
+        enabled: true,
+        credentialId: "cred-main",
+        allowedInstanceIds: ["instance-main"],
+        instances: [
+          {
+            instanceId: "instance-main",
+            scheduleControlEnabled: false,
+            keepAlive: true,
+            shutdownMode: "KeepCharging",
+          },
+        ],
+        scopes: [],
+      }),
+    }),
+    responder: stoppedResponder,
+    cron: "*/5 * * * *",
+  });
+
+  await automationEntry(fake.ctx);
+  const actions = actionsIn(fake.requests);
+
+  // The entry really did observe the instance, so the assertions below are not
+  // vacuous: a keep-alive decision was reached and then withheld.
+  assert.ok(actions.includes("DescribeInstanceStatus"), `expected a status read, got ${actions.join(",")}`);
+
+  // Yet no cloud write may occur, because the two device-verified preconditions
+  // are still unproven.
+  assert.ok(!actions.includes("StartInstance"), "keep-alive must not write while the gate is closed");
+  assert.ok(!actions.includes("StopInstance"));
+});
+
+test("the automation entry never even reads when the master switch is off", async () => {
+  const fake = createFakeContext({
+    env: baseEnv({
+      CDT_CONTROL_JSON: JSON.stringify({ schemaVersion: 1, enabled: false }),
+    }),
+    responder: stoppedResponder,
+    cron: "*/5 * * * *",
+  });
+  await automationEntry(fake.ctx);
+  assert.equal(fake.requests.length, 0);
+});
+
 /* ------------------------------- configuration ---------------------------- */
 
 test("a broken configuration still renders a valid, explanatory widget", async () => {

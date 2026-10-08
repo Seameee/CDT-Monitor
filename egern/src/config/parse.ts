@@ -32,6 +32,7 @@ import type {
   ViewSelection,
 } from "../domain/models.ts";
 import { trafficClassOfRegion } from "../domain/usage.ts";
+import { unverifiedDevice } from "../domain/models.ts";
 import { normalizeClockTime } from "../domain/schedule.ts";
 import { utf8Bytes } from "../host/crypto.ts";
 import { normalizeServerBaseUrl } from "../providers/cdt-server.ts";
@@ -95,6 +96,9 @@ function emptyControlConfig(): ControlConfig {
     // Everything below defaults to "off". Deleting the config is equivalent to
     // disabling it; there is no conflicting implicit switch.
     enabled: false,
+    // Attests nothing. There is deliberately no env variable, module default or
+    // code path that pre-fills this.
+    deviceVerification: unverifiedDevice(),
     credentialId: null,
     allowedInstanceIds: [],
     scopes: [],
@@ -203,8 +207,8 @@ function parseControlConfig(
   // Unknown keys are refused rather than ignored: a misspelled safety switch
   // must not silently leave control in a state the user did not intend.
   const knownKeys = [
-    "schemaVersion", "enabled", "credentialId", "allowedInstanceIds",
-    "scopes", "instances", "actionCooldownSeconds", "pauseUntil",
+    "schemaVersion", "enabled", "deviceVerification", "credentialId",
+    "allowedInstanceIds", "scopes", "instances", "actionCooldownSeconds", "pauseUntil",
   ];
   for (const key of Object.keys(record)) {
     if (!knownKeys.includes(key)) {
@@ -218,6 +222,78 @@ function parseControlConfig(
     return config;
   }
   config.enabled = record["enabled"] === true;
+
+  // Device attestation. Parsed strictly and before anything else, because it is
+  // what decides whether a cloud write is permitted at all.
+  const attestation = record["deviceVerification"];
+  if (attestation !== undefined) {
+    if (attestation === null || typeof attestation !== "object" || Array.isArray(attestation)) {
+      issues.error(
+        "CDT_CONTROL_JSON.deviceVerification",
+        "deviceVerification 必须是对象，控制保持关闭",
+      );
+      config.enabled = false;
+      return config;
+    }
+    const item = attestation as Record<string, unknown>;
+    const allowed = ["crossExecutionIntentClaim", "hostSerializesSameTarget", "verifiedAt", "note"];
+    for (const key of Object.keys(item)) {
+      if (!allowed.includes(key)) {
+        issues.error(
+          "CDT_CONTROL_JSON.deviceVerification",
+          `deviceVerification 含未知字段 ${key}，控制保持关闭`,
+        );
+        config.enabled = false;
+        return config;
+      }
+    }
+    for (const key of ["crossExecutionIntentClaim", "hostSerializesSameTarget"]) {
+      if (item[key] !== undefined && typeof item[key] !== "boolean") {
+        issues.error(
+          "CDT_CONTROL_JSON.deviceVerification",
+          `${key} 必须是布尔值，控制保持关闭`,
+        );
+        config.enabled = false;
+        return config;
+      }
+    }
+    const crossExecution = item["crossExecutionIntentClaim"] === true;
+    const serialises = item["hostSerializesSameTarget"] === true;
+
+    let verifiedAt: string | null = null;
+    if (item["verifiedAt"] !== undefined && item["verifiedAt"] !== null) {
+      if (
+        typeof item["verifiedAt"] !== "string" ||
+        !Number.isFinite(Date.parse(item["verifiedAt"]))
+      ) {
+        issues.error(
+          "CDT_CONTROL_JSON.deviceVerification.verifiedAt",
+          "verifiedAt 必须是合法的 ISO 8601 日期或时间，控制保持关闭",
+        );
+        config.enabled = false;
+        return config;
+      }
+      verifiedAt = item["verifiedAt"];
+    }
+
+    // An attestation without a date is not an audit trail, so it is refused
+    // rather than silently accepted.
+    if ((crossExecution || serialises) && verifiedAt === null) {
+      issues.error(
+        "CDT_CONTROL_JSON.deviceVerification.verifiedAt",
+        "声明已通过真机验证时必须同时填写 verifiedAt，控制保持关闭",
+      );
+      config.enabled = false;
+      return config;
+    }
+
+    config.deviceVerification = {
+      crossExecutionIntentClaim: crossExecution,
+      hostSerializesSameTarget: serialises,
+      verifiedAt,
+      note: typeof item["note"] === "string" ? item["note"] : null,
+    };
+  }
 
   const credentialId = record["credentialId"];
   if (credentialId !== undefined && credentialId !== null) {
@@ -552,6 +628,17 @@ export function parseConfig(
     knownInstanceIds,
     issues,
   );
+  // Local instance control writes to Aliyun directly, so it needs cloud
+  // credentials. Server mode deliberately carries none, so control there would
+  // fail at request time; refuse it up front with a clear reason instead.
+  if (mode === "server" && control.enabled) {
+    issues.error(
+      ENV_KEYS.controlJson,
+      "server 模式不提供本地云写控制（该模式没有云端凭据）；保活已关闭，请改用 direct 模式，或由 Go 后端执行实例操作",
+    );
+    control.enabled = false;
+  }
+
   const notifications = parseNotificationConfig(
     readJson(env, ENV_KEYS.notificationJson, issues),
     localNotify,

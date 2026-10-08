@@ -56,11 +56,46 @@ export interface ControlCapability {
   hostSerializesSameTarget: boolean;
 }
 
-/** The default, safe capability state. */
+/** The default, safe capability state: attests nothing. */
 export const NO_CONTROL_CAPABILITY: ControlCapability = {
   crossExecutionIntentClaim: false,
   hostSerializesSameTarget: false,
 };
+
+/**
+ * Derive the capability from the user's explicit attestation.
+ *
+ * This is the **only** place a write capability can be granted, and it can only
+ * ever be granted by configuration the user wrote themselves. Neither the module
+ * templates nor any code path pre-fills it. If either precondition is missing,
+ * the result is a closed gate.
+ */
+export function capabilityFromConfig(config: AppConfig): ControlCapability {
+  const attestation = config.control.deviceVerification;
+  return {
+    crossExecutionIntentClaim: attestation.crossExecutionIntentClaim === true,
+    hostSerializesSameTarget: attestation.hostSerializesSameTarget === true,
+  };
+}
+
+/** True when the user has attested both preconditions. */
+export function isControlVerified(config: AppConfig): boolean {
+  const capability = capabilityFromConfig(config);
+  return capability.crossExecutionIntentClaim && capability.hostSerializesSameTarget;
+}
+
+/** Describe the capability state for diagnostics and audit output. */
+export function describeCapability(config: AppConfig): string {
+  const attestation = config.control.deviceVerification;
+  const capability = capabilityFromConfig(config);
+  if (capability.crossExecutionIntentClaim && capability.hostSerializesSameTarget) {
+    return `已声明通过真机验证（${attestation.verifiedAt ?? "未注明时间"}）`;
+  }
+  const missing: string[] = [];
+  if (!capability.crossExecutionIntentClaim) missing.push("跨执行意图持久化");
+  if (!capability.hostSerializesSameTarget) missing.push("同目标串行执行");
+  return `未验证（缺少：${missing.join("、")}）`;
+}
 
 /** Write operations, kept separate from the read-only provider interface. */
 export interface ControlProvider {

@@ -6,6 +6,7 @@
  * the others never produce.
  */
 
+import { unverifiedDevice } from "../src/domain/models.ts";
 import type {
   AppConfig,
   ControlConfig,
@@ -78,6 +79,8 @@ export function controlConfig(overrides: Partial<ControlConfig> = {}): ControlCo
   return {
     schemaVersion: 1,
     enabled: true,
+    // Attests nothing by default: individual tests opt in explicitly.
+    deviceVerification: unverifiedDevice(),
     credentialId: "cred-main",
     allowedInstanceIds: ["hk-ecs"],
     scopes: [],
@@ -196,6 +199,21 @@ export function cacheFor(config: AppConfig): Cache {
     namespace: config.namespace,
     provider: config.mode,
     fingerprint: config.configFingerprint,
+  });
+}
+
+/** A control config whose device attestation claims both preconditions. */
+export function attestedControlConfig(
+  overrides: Partial<ControlConfig> = {},
+): ControlConfig {
+  return controlConfig({
+    deviceVerification: {
+      crossExecutionIntentClaim: true,
+      hostSerializesSameTarget: true,
+      verifiedAt: "2026-10-09T00:00:00Z",
+      note: "test attestation",
+    },
+    ...overrides,
   });
 }
 

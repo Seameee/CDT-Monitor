@@ -22,13 +22,19 @@ import { evaluateAutomation } from "../domain/policy.ts";
 import { createTimeZoneProvider } from "../domain/timezone.ts";
 import { collectSnapshot } from "../services/collect.ts";
 import {
-  NO_CONTROL_CAPABILITY,
+  capabilityFromConfig,
   executeControlIntent,
 } from "../services/control.ts";
 import { dispatchNotification } from "../services/notifications.ts";
 import type { NotificationEvent } from "../services/notifications.ts";
 import { formatPercent } from "../domain/format.ts";
-import { REFRESH_BUDGET_MS, createProvider, prepareRuntime } from "./runtime.ts";
+import {
+  REFRESH_BUDGET_MS,
+  createProvider,
+  createRpcDependencies,
+  prepareRuntime,
+} from "./runtime.ts";
+import { DirectControlProvider } from "../providers/aliyun/control.ts";
 
 export default async function main(ctx: EgernScriptContext): Promise<void> {
   const prepared = prepareRuntime(ctx, REFRESH_BUDGET_MS);
@@ -77,7 +83,7 @@ export default async function main(ctx: EgernScriptContext): Promise<void> {
     await dispatchNotification(notificationDeps, event, config.notifications, now);
   }
 
-  const capability = NO_CONTROL_CAPABILITY;
+  const capability = capabilityFromConfig(config);
   const actionsProven = capability.crossExecutionIntentClaim && capability.hostSerializesSameTarget;
 
   for (const decision of result.decisions) {
@@ -105,6 +111,11 @@ export default async function main(ctx: EgernScriptContext): Promise<void> {
     const instance = snapshot.instances.find((item) => item.id === decision.instanceId);
     if (instance === undefined) continue;
 
+    // The write provider is only constructed *after* the capability gate passes,
+    // so the read path never instantiates a cloud writer at all. Passing null
+    // here instead would make this branch permanently dead and hide the gate.
+    const controlProvider = new DirectControlProvider(createRpcDependencies(runtime));
+
     await executeControlIntent({
       intent: {
         schemaVersion: 1,
@@ -120,7 +131,7 @@ export default async function main(ctx: EgernScriptContext): Promise<void> {
       snapshot,
       config,
       cache,
-      provider: null,
+      provider: controlProvider,
       capability,
       scope: {
         deadlineMs: runtime.deadlineMs,

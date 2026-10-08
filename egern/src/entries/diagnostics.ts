@@ -17,6 +17,7 @@
 
 import type { EgernScriptContext } from "../host/types.ts";
 import { prepareRuntime, WIDGET_BUDGET_MS } from "./runtime.ts";
+import { describeCapability } from "../services/control.ts";
 import type { ConfigIssue } from "../config/env.ts";
 
 /** A single probe result. */
@@ -196,6 +197,7 @@ export default async function main(ctx: EgernScriptContext): Promise<unknown> {
     `账单 ${config.billingEnabled ? "开" : "关"} · 本地通知 ${
       config.localNotify ? "开" : "关"
     } · 控制 ${config.control.enabled ? "开" : "关（默认）"}`,
+    `写入能力：${describeCapability(config)}`,
   ];
 
   const problems = summarizeIssues(issues);

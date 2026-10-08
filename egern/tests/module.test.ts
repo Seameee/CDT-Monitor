@@ -1,9 +1,13 @@
 /**
  * Module template invariants.
  *
- * These run against the **source** templates in `modules/`, so they hold even
+ * These run against the **source** template in `modules/`, so they hold even
  * before a build. `scripts/validate-modules.mjs` repeats the critical checks
  * against the stamped `dist/` output, where the build tokens have been resolved.
+ *
+ * Since the plugin ships as a single self-contained module, the most important
+ * property to assert here is that installing it cannot, by itself, enable any
+ * cloud write: no env default, and no script-level env, may switch control on.
  */
 
 import { test } from "node:test";
@@ -29,174 +33,209 @@ function loadModules(): Array<{ fileName: string; doc: Record<string, unknown> }
     }));
 }
 
-test("all three module templates exist and parse", () => {
+/** The single module's parsed document. */
+function theModule(): { fileName: string; doc: Record<string, unknown> } {
   const modules = loadModules();
-  const names = modules.map((module) => module.fileName).sort();
-  assert.deepEqual(names, [
-    "cdt-monitor-control.yaml",
-    "cdt-monitor-server.yaml",
-    "cdt-monitor.yaml",
-  ]);
-  for (const module of modules) {
-    assert.equal(typeof module.doc["name"], "string", module.fileName);
-    assert.ok(String(module.doc["name"]).length > 0);
+  assert.equal(modules.length, 1, "the plugin ships as exactly one module");
+  return modules[0] as { fileName: string; doc: Record<string, unknown> };
+}
+
+/** Read a scripting body by name, tagging which type it was declared as. */
+function scriptingByName(
+  doc: Record<string, unknown>,
+  name: string,
+): Record<string, unknown> {
+  for (const entry of (doc["scriptings"] as Array<Record<string, unknown>>) ?? []) {
+    const type = SCRIPT_TYPES.find((key) => key in entry);
+    if (type === undefined) continue;
+    const body = entry[type] as Record<string, unknown>;
+    if (body["name"] === name) return { ...body, __type: type };
+  }
+  throw new Error(`scripting ${name} not found`);
+}
+
+test("the plugin ships as exactly one self-contained module", () => {
+  const { fileName, doc } = theModule();
+  assert.equal(fileName, "cdt-monitor.yaml");
+  assert.equal(typeof doc["name"], "string");
+  assert.ok(String(doc["name"]).length > 0);
+  assert.equal(typeof doc["icon"], "string");
+});
+
+test("the module declares every entry point it needs, each pointing at a real artifact", () => {
+  const { doc } = theModule();
+  const expected: Array<[string, string]> = [
+    ["cdt-{{{MODULE_ID}}}-widget", "cdt-widget.js"],
+    ["cdt-{{{MODULE_ID}}}-diagnostics", "cdt-diagnostics.js"],
+    ["cdt-{{{MODULE_ID}}}-refresh", "cdt-refresh.js"],
+    ["cdt-{{{MODULE_ID}}}-manual", "cdt-control.js"],
+    ["cdt-{{{MODULE_ID}}}-automation", "cdt-automation.js"],
+  ];
+  for (const [name, artifact] of expected) {
+    const body = scriptingByName(doc, name);
+    const url = String(body["script_url"]);
+    assert.ok(url.endsWith(`/${artifact}`), `${name} should point at ${artifact}, got ${url}`);
+    // This reads the *source* template, where the release base is still a build
+    // token. That the stamped output contains no token is asserted separately by
+    // scripts/validate-modules.mjs against dist/.
+    assert.ok(
+      url.includes("@@RELEASE_BASE@@"),
+      `${name} should use the build-time release token, got ${url}`,
+    );
+    assert.ok(!url.includes("example.com"), `${name} points at a placeholder domain`);
   }
 });
 
-test("every module declares a non-secret MODULE_ID used to namespace names", () => {
-  const seenIds = new Set<string>();
-  for (const { fileName, doc } of loadModules()) {
-    const compat = doc["compat_arguments"] as Record<string, unknown> | undefined;
-    assert.ok(compat !== undefined, `${fileName} must declare compat_arguments`);
-    const moduleId = compat?.["MODULE_ID"];
-    assert.equal(typeof moduleId, "string", fileName);
-    assert.match(String(moduleId), /^[A-Za-z0-9_-]+$/, fileName);
-    // Distinct defaults mean installing two modules cannot collide by accident.
-    assert.ok(!seenIds.has(String(moduleId)), `${fileName} reuses MODULE_ID ${String(moduleId)}`);
-    seenIds.add(String(moduleId));
+test("the two schedules do not share a cadence", () => {
+  const { doc } = theModule();
+  const refresh = scriptingByName(doc, "cdt-{{{MODULE_ID}}}-refresh");
+  const automation = scriptingByName(doc, "cdt-{{{MODULE_ID}}}-automation");
+  assert.equal(refresh["__type"], "schedule");
+  assert.equal(automation["__type"], "schedule");
+  // A 15-minute collection cycle cannot cover the 10-minute compensation window.
+  assert.equal(automation["cron"], "*/5 * * * *");
+  assert.equal(refresh["cron"], "*/15 * * * *");
+});
+
+test("every module name is namespaced by MODULE_ID", () => {
+  const { doc } = theModule();
+  const compat = doc["compat_arguments"] as Record<string, unknown> | undefined;
+  assert.ok(compat !== undefined, "compat_arguments must be declared");
+  assert.match(String(compat?.["MODULE_ID"]), /^[A-Za-z0-9_-]+$/);
+
+  for (const entry of (doc["scriptings"] as Array<Record<string, unknown>>) ?? []) {
+    const type = SCRIPT_TYPES.find((key) => key in entry);
+    const body = entry[type as string] as Record<string, unknown>;
+    assert.ok(
+      String(body["name"]).includes("{{{MODULE_ID}}}"),
+      `${String(body["name"])} lacks the MODULE_ID prefix`,
+    );
   }
 });
 
-test("widgets only reference generic scripts and every name uses MODULE_ID", () => {
-  for (const { fileName, doc } of loadModules()) {
-    const scriptings = (doc["scriptings"] as Array<Record<string, unknown>>) ?? [];
-    const genericNames = new Set<string>();
-    for (const entry of scriptings) {
-      const type = SCRIPT_TYPES.find((key) => key in entry);
-      assert.ok(type !== undefined, `${fileName}: a script has no type key`);
-      const body = entry[type as string] as Record<string, unknown>;
-      const name = String(body["name"]);
-      assert.ok(name.includes("{{{MODULE_ID}}}"), `${fileName}: ${name} lacks the MODULE_ID prefix`);
-      if (type === "generic") genericNames.add(name);
-      // Every script must point at a real artifact, with a resolved base.
-      const url = String(body["script_url"]);
-      assert.ok(url.includes("@@RELEASE_BASE@@") || url.startsWith("https://"), `${fileName}: ${url}`);
-      assert.ok(!url.includes("example.com"), `${fileName}: placeholder domain in ${url}`);
-      assert.ok(!url.includes("TODO"), `${fileName}: unresolved TODO in ${url}`);
-    }
+test("the single widget only references the read-only widget script", () => {
+  const { doc } = theModule();
+  const widgets = (doc["widgets"] as Array<Record<string, unknown>> | undefined) ?? [];
+  assert.equal(widgets.length, 1);
+  const target = String(widgets[0]?.["script_name"] ?? widgets[0]?.["name"]);
+  assert.equal(target, "cdt-{{{MODULE_ID}}}-widget");
+  assert.ok(!target.includes("manual"));
+  assert.ok(!target.includes("automation"));
+});
 
-    const widgets = (doc["widgets"] as Array<Record<string, unknown>> | undefined) ?? [];
-    for (const widget of widgets) {
-      const target = String(widget["script_name"] ?? widget["name"]);
-      assert.ok(genericNames.has(target), `${fileName}: widget -> ${target} is not a generic script`);
+test("installing the module cannot by itself enable any cloud write", () => {
+  const { doc } = theModule();
+
+  for (const entry of (doc["scriptings"] as Array<Record<string, unknown>>) ?? []) {
+    const type = SCRIPT_TYPES.find((key) => key in entry);
+    const body = entry[type as string] as Record<string, unknown>;
+    const env = (body["env"] as Record<string, unknown> | undefined) ?? {};
+    for (const key of ["CDT_CONTROL_JSON", "CDT_CONTROL_INTENT_JSON"]) {
+      assert.equal(env[key], undefined, `${String(body["name"])} must not preset ${key}`);
     }
+  }
+
+  const schema = (doc["env_schema"] as Record<string, Record<string, unknown>>) ?? {};
+  for (const key of ["CDT_CONTROL_JSON", "CDT_CONTROL_INTENT_JSON"]) {
+    assert.equal(schema[key]?.["default_value"], undefined, `${key} must have no default`);
+  }
+
+  // No boolean may default to true: enabling must be an explicit user act.
+  for (const [key, descriptor] of Object.entries(schema)) {
+    assert.notEqual(descriptor["default_value"], "true", `${key} must not default to true`);
   }
 });
 
-test("no module enables MITM, DNS interception or rewrite rules", () => {
-  // This plugin only makes outbound API requests; it must never ask the user to
-  // intercept their own traffic.
-  for (const { fileName, doc } of loadModules()) {
-    for (const forbidden of [
-      "mitm", "http_captures", "dns", "rules", "url_rewrites",
-      "header_rewrites", "body_rewrites", "map_locals",
-    ]) {
-      assert.equal(doc[forbidden], undefined, `${fileName} declares ${forbidden}`);
-    }
+test("the module documents what the device attestation means", () => {
+  const { doc } = theModule();
+  const schema = (doc["env_schema"] as Record<string, Record<string, unknown>>) ?? {};
+  const described = JSON.stringify(schema["CDT_CONTROL_JSON"] ?? {});
+  // Enabling a cloud write must be an informed act, not a copied snippet.
+  assert.ok(described.includes("deviceVerification"));
+  assert.ok(described.includes("crossExecutionIntentClaim"));
+  assert.ok(described.includes("hostSerializesSameTarget"));
+  assert.ok(described.includes("enabled"));
+});
+
+test("the data-source picker means one module covers both modes", () => {
+  const { doc } = theModule();
+  const schema = (doc["env_schema"] as Record<string, Record<string, unknown>>) ?? {};
+  const mode = schema["CDT_MODE"];
+  assert.ok(mode !== undefined, "CDT_MODE must exist");
+  assert.deepEqual(mode?.["options"], ["direct", "server"]);
+  assert.equal(mode?.["default_value"], "direct");
+  for (const key of ["CDT_ACCESS_KEY_ID", "CDT_BASE_URL", "CDT_READ_TOKEN"]) {
+    assert.ok(schema[key] !== undefined, `${key} missing`);
   }
 });
 
 test("env_schema uses only documented descriptor fields and known variables", () => {
+  const { doc } = theModule();
   const allowed = new Set(["name", "description", "default_value", "options"]);
-  for (const { fileName, doc } of loadModules()) {
-    const schema = (doc["env_schema"] as Record<string, Record<string, unknown>>) ?? {};
-    for (const [key, descriptor] of Object.entries(schema)) {
-      assert.match(key, /^CDT_[A-Z0-9_]+$/, `${fileName}: unexpected variable ${key}`);
-      for (const field of Object.keys(descriptor)) {
-        assert.ok(allowed.has(field), `${fileName}: ${key} uses undocumented field ${field}`);
-      }
-      const options = descriptor["options"];
-      if (options !== undefined) {
-        assert.ok(Array.isArray(options) && options.length > 0, `${fileName}: ${key}.options`);
-        const defaultValue = descriptor["default_value"];
-        if (defaultValue !== undefined) {
-          assert.ok(
-            (options as unknown[]).includes(defaultValue),
-            `${fileName}: ${key} default is not among its options`,
-          );
-        }
-      }
+  const schema = (doc["env_schema"] as Record<string, Record<string, unknown>>) ?? {};
+  for (const [key, descriptor] of Object.entries(schema)) {
+    assert.match(key, /^CDT_[A-Z0-9_]+$/, `unexpected variable ${key}`);
+    for (const field of Object.keys(descriptor)) {
+      assert.ok(allowed.has(field), `${key} uses undocumented field ${field}`);
     }
-  }
-});
-
-test("boolean toggles are declared as exactly [true,false] with a string default", () => {
-  for (const { fileName, doc } of loadModules()) {
-    const schema = (doc["env_schema"] as Record<string, Record<string, unknown>>) ?? {};
-    for (const [key, descriptor] of Object.entries(schema)) {
-      const options = descriptor["options"] as unknown[] | undefined;
-      if (options === undefined) continue;
-      const isToggle =
-        options.length === 2 && options.includes("true") && options.includes("false");
-      if (!isToggle) continue;
-      const defaultValue = descriptor["default_value"];
+    const options = descriptor["options"];
+    if (options === undefined) continue;
+    assert.ok(Array.isArray(options) && options.length > 0, `${key}.options`);
+    const defaultValue = descriptor["default_value"];
+    if (defaultValue !== undefined) {
+      assert.ok(
+        (options as unknown[]).includes(defaultValue),
+        `${key} default is not among its options`,
+      );
+    }
+    const isToggle =
+      (options as unknown[]).length === 2 &&
+      (options as unknown[]).includes("true") &&
+      (options as unknown[]).includes("false");
+    if (isToggle) {
       assert.ok(
         defaultValue === "true" || defaultValue === "false",
-        `${fileName}: toggle ${key} must have a string "true"/"false" default`,
+        `toggle ${key} must have a string "true"/"false" default`,
       );
     }
   }
 });
 
 test("secrets are never given a default value in env_schema", () => {
-  for (const { fileName, doc } of loadModules()) {
-    const schema = (doc["env_schema"] as Record<string, Record<string, unknown>>) ?? {};
-    for (const key of ["CDT_ACCESS_KEY_SECRET", "CDT_READ_TOKEN", "CDT_SECURITY_TOKEN"]) {
-      const descriptor = schema[key];
-      if (descriptor === undefined) continue;
-      assert.equal(
-        descriptor["default_value"],
-        undefined,
-        `${fileName}: ${key} must not ship a default value`,
-      );
-    }
+  const { doc } = theModule();
+  const schema = (doc["env_schema"] as Record<string, Record<string, unknown>>) ?? {};
+  for (const key of [
+    "CDT_ACCESS_KEY_SECRET",
+    "CDT_READ_TOKEN",
+    "CDT_SECURITY_TOKEN",
+    "CDT_TELEGRAM_BOT_TOKEN",
+  ]) {
+    const descriptor = schema[key];
+    if (descriptor === undefined) continue;
+    assert.equal(descriptor["default_value"], undefined, `${key} must not ship a default`);
   }
 });
 
-test("the control module ships every write script disabled", () => {
-  const control = loadModules().find((module) => module.fileName === "cdt-monitor-control.yaml");
-  assert.ok(control !== undefined);
-  const scriptings = (control?.doc["scriptings"] as Array<Record<string, unknown>>) ?? [];
-  assert.ok(scriptings.length > 0);
-  for (const entry of scriptings) {
+test("the module performs no MITM, DNS interception or rewrite rules", () => {
+  // This plugin only makes outbound API requests; it must never ask the user to
+  // intercept their own traffic.
+  const { doc } = theModule();
+  for (const forbidden of [
+    "mitm", "http_captures", "dns", "rules", "url_rewrites",
+    "header_rewrites", "body_rewrites", "map_locals",
+  ]) {
+    assert.equal(doc[forbidden], undefined, `module declares ${forbidden}`);
+  }
+});
+
+test("view-selection variables are not pinned in script env", () => {
+  const { doc } = theModule();
+  for (const entry of (doc["scriptings"] as Array<Record<string, unknown>>) ?? []) {
     const type = SCRIPT_TYPES.find((key) => key in entry);
     const body = entry[type as string] as Record<string, unknown>;
-    assert.equal(body["disabled"], true, `${String(body["name"])} must ship disabled`);
-  }
-  // A control script must not be attachable to a widget.
-  assert.equal(control?.doc["widgets"], undefined);
-});
-
-test("the automation cron runs more often than the collection cron", () => {
-  const control = loadModules().find((module) => module.fileName === "cdt-monitor-control.yaml");
-  const base = loadModules().find((module) => module.fileName === "cdt-monitor.yaml");
-  const cronOf = (doc: Record<string, unknown> | undefined): string => {
-    const scriptings = (doc?.["scriptings"] as Array<Record<string, unknown>>) ?? [];
-    for (const entry of scriptings) {
-      if (!("schedule" in entry)) continue;
-      return String((entry["schedule"] as Record<string, unknown>)["cron"]);
-    }
-    return "";
-  };
-  // The 10-minute compensation window cannot be covered by a 15-minute cycle.
-  assert.equal(cronOf(control?.doc), "*/5 * * * *");
-  assert.equal(cronOf(base?.doc), "*/15 * * * *");
-});
-
-test("view-selection variables are not pinned in any module script env", () => {
-  for (const { fileName, doc } of loadModules()) {
-    const scriptings = (doc["scriptings"] as Array<Record<string, unknown>>) ?? [];
-    for (const entry of scriptings) {
-      const type = SCRIPT_TYPES.find((key) => key in entry);
-      const body = entry[type as string] as Record<string, unknown>;
-      const env = (body["env"] as Record<string, unknown> | undefined) ?? {};
-      for (const viewVar of ["CDT_SCOPE_ID", "CDT_INSTANCE_IDS", "CDT_THEME"]) {
-        assert.equal(
-          env[viewVar],
-          undefined,
-          `${fileName}: ${viewVar} must be set per widget, not per module`,
-        );
-      }
+    const env = (body["env"] as Record<string, unknown> | undefined) ?? {};
+    for (const viewVar of ["CDT_SCOPE_ID", "CDT_INSTANCE_IDS", "CDT_THEME"]) {
+      assert.equal(env[viewVar], undefined, `${viewVar} must be set per widget, not per module`);
     }
   }
 });
@@ -210,9 +249,12 @@ test("the built dist output exists once a build has run", () => {
   const files = readdirSync(distDir);
   for (const expected of [
     "cdt-widget.js", "cdt-refresh.js", "cdt-diagnostics.js",
-    "cdt-control.js", "cdt-automation.js", "manifest.json",
-    "cdt-monitor.yaml", "cdt-monitor-server.yaml", "cdt-monitor-control.yaml",
+    "cdt-control.js", "cdt-automation.js", "manifest.json", "cdt-monitor.yaml",
   ]) {
     assert.ok(files.includes(expected), `dist/${expected} is missing`);
+  }
+  // The merged design means the old two-module split must be gone.
+  for (const gone of ["cdt-monitor-server.yaml", "cdt-monitor-control.yaml"]) {
+    assert.ok(!files.includes(gone), `dist/${gone} should no longer be published`);
   }
 });

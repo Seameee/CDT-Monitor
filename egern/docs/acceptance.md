@@ -13,8 +13,8 @@
 | 命令 | 结果 |
 | --- | --- |
 | `npm run typecheck` | 退出码 0 |
-| `npm test` | **198 项通过 / 0 失败** |
-| `npm run build` | 生成 5 脚本 + 3 模块 + `manifest.json` |
+| `npm test` | **206 项通过 / 0 失败** |
+| `npm run build` | 生成 5 脚本 + 1 模块 + `manifest.json` |
 | `npm run check:modules` | 通过 |
 | `npm run check:bundles` | 通过（含读写边界断言） |
 
@@ -40,7 +40,7 @@
 | B01 | 余额 0/123.45、账单 23.456、TTL 6h/失败旧值 | **通过**：0 非缺失；金额正确；TTL 与新周期失效可见 | `tests/traffic.test.ts`、`tests/collection.test.ts` |
 | B02 | 多实例共享余额、CNY+USD | **通过**：不重复；分币种；无自动换汇 | `tests/usage.test.ts`、`tests/collection.test.ts` |
 | C01 | widget/refresh/diagnostics/history/report | **通过**：`StartInstance`/`StopInstance` 调用数 = 0；`check:bundles` 静态断言只读 bundle 不含写执行器 | `tests/entries.test.ts`、`scripts/check-bundles.mjs` |
-| C02 | 缺授权/过期意图/错实例/已消费/Unknown | **通过**：0 动作，且每种都有明确阻断码与说明 | `tests/policy.test.ts` |
+| C02 | 缺授权/过期意图/错实例/已消费/Unknown/未自证 | **通过**：0 动作，且每种都有明确阻断码与说明；另验证「自证后确实会执行」 | `tests/policy.test.ts` |
 | C03 | `notify_only` 超限 | **通过**：只通知不停机；重复刷新不重复通知 | `tests/policy.test.ts`、`tests/entries.test.ts` |
 | C04 | 首次超限→停止→再次 Running 仍超限 | **通过**：保护基于当前观测重新生效，未被旧闩锁永久阻止（且幂等键不同） | `tests/policy.test.ts` |
 | C05 | 超限 + 计划 start + keepAlive、manual stop 暂停 | **通过**：保护优先；`pauseUntil` 抑制保活 | `tests/policy.test.ts` |
@@ -65,7 +65,7 @@
 
 | 检查项 | 结果 |
 | --- | --- |
-| 每个 `widget.script_name` 存在且指向 generic | 通过（`check:modules` + `tests/module.test.ts`） |
+| 每个 `widget.script_name` 存在且指向 generic | 通过（单模块设计；`check:modules` + `tests/module.test.ts`） |
 | `script_url` 对应真实产物，无占位域名/TODO | 通过（`@@RELEASE_BASE@@` 在构建期替换） |
 | `env_schema` 默认值与代码默认一致 | 通过（显式对照表，不一致即失败） |
 | 布尔 false / 空值 / JSON 错误正确处理 | 通过（严格解析；非法 JSON 直接报错不降级） |

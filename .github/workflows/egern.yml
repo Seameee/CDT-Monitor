@@ -43,11 +43,32 @@ jobs:
         run: npm test
 
       # 构建必须早于产物校验，否则 check:modules / check:bundles 没有输入。
-      # 在 CI 中把发布地址固定到当前 commit，保证产物内不残留本地路径。
       - name: Build bundles and modules
         env:
+          # 把 script_url 固定到当前 commit，避免模块指向会移动的分支。
           CDT_RELEASE_REF: ${{ github.sha }}
+          # 由 CI 写入来源 commit：本地构建无法得知"包含自己的那个 commit"，
+          # 若由本地读取 HEAD 会让 manifest 每次重建都不同。
+          CDT_SOURCE_COMMIT: ${{ github.sha }}
+          # 可复现构建：固定 manifest 的时间戳。
+          SOURCE_DATE_EPOCH: ${{ github.event.repository.pushed_at }}
         run: npm run build
+
+      # 可复现性门禁：同一份源码连续构建两次必须产出完全一致的文件。
+      - name: Verify the build is reproducible
+        env:
+          CDT_RELEASE_REF: ${{ github.sha }}
+          CDT_SOURCE_COMMIT: ${{ github.sha }}
+          SOURCE_DATE_EPOCH: ${{ github.event.repository.pushed_at }}
+        run: |
+          find dist -type f -exec sha256sum {} + | sort > /tmp/dist-first.txt
+          npm run build
+          find dist -type f -exec sha256sum {} + | sort > /tmp/dist-second.txt
+          if ! diff -u /tmp/dist-first.txt /tmp/dist-second.txt; then
+            echo "::error::build is not reproducible"
+            exit 1
+          fi
+          echo "build is reproducible"
 
       - name: Validate modules
         run: npm run check:modules

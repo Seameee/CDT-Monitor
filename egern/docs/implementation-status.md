@@ -16,8 +16,8 @@
 | 项目 | 证据 |
 | --- | --- |
 | TypeScript 类型检查 | `npm run typecheck` 退出码 `0` |
-| 离线测试 | `npm test`：**198 项全部通过，0 失败** |
-| 构建 | `npm run build`：5 个脚本 + 3 个模块 + `manifest.json` |
+| 离线测试 | `npm test`：**206 项全部通过，0 失败** |
+| 构建 | `npm run build`：5 个脚本 + 1 个模块 + `manifest.json` |
 | 模块校验 | `npm run check:modules` 通过 |
 | 产物校验 | `npm run check:bundles` 通过（含读写边界断言） |
 
@@ -25,19 +25,19 @@
 
 | 产物 | 大小 | SHA-256 前 12 位 |
 | --- | --- | --- |
-| `cdt-widget.js` | 146782 B | `d455f803cbec` |
-| `cdt-refresh.js` | 121939 B | `2cc8c086e104` |
-| `cdt-diagnostics.js` | 56034 B | `fd82c1e45065` |
-| `cdt-control.js` | 125023 B | `e9279508157c` |
-| `cdt-automation.js` | 135684 B | `b8af95c7d6b9` |
-| `cdt-monitor.yaml` | 4225 B | `fa08b9f709fb` |
-| `cdt-monitor-server.yaml` | 3396 B | `79f24d7e80de` |
-| `cdt-monitor-control.yaml` | 2399 B | `ba089b159563` |
+| `cdt-widget.js` | 149757 B | `8c36e11e2c85` |
+| `cdt-refresh.js` | 124914 B | `5b21f4983f30` |
+| `cdt-diagnostics.js` | 59966 B | `09d955bacb26` |
+| `cdt-control.js` | 128172 B | `e7400f627fce` |
+| `cdt-automation.js` | 140780 B | `02b1628c451d` |
+| `cdt-monitor.yaml` | 8613 B | `5756d79bae80` |
 
 全部脚本均低于 200KB 的项目预算（非平台硬限制）。完整校验和见 `dist/manifest.json`。
 
 发布地址由构建时的 `origin` 远端与分支推导（可用 `CDT_REPO_SLUG` / `CDT_RELEASE_REF` /
-`CDT_RELEASE_BASE_URL` 覆盖），本次为：
+`CDT_RELEASE_BASE_URL` 覆盖）。`manifest.json` 的 `commit` 字段由 CI 通过
+`CDT_SOURCE_COMMIT` 写入——本地构建无法得知"包含自己的那个 commit"，因此本地为 `null`
+（这也让构建可复现：连续两次构建产出完全一致）。本次为：
 
 ```text
 https://raw.githubusercontent.com/Seameee/CDT-Monitor/main/egern/dist
@@ -61,7 +61,7 @@ https://raw.githubusercontent.com/Seameee/CDT-Monitor/main/egern/dist
 | 小组件渲染 | `src/widget/*.ts` | 完成（7 family、SVG、全状态降级） |
 | 定时采集与通知 | `src/entries/refresh.ts` | 完成 |
 | 脱敏诊断 | `src/entries/diagnostics.ts` | 完成 |
-| 独立控制路径 | `src/entries/control.ts`、`automation.ts`、`services/control.ts` | 完成但**默认关闭**（能力门槛未证明） |
+| 独立控制路径 | `src/entries/control.ts`、`automation.ts`、`services/control.ts` | 完成，**默认关闭**；开启需显式真机自证（`deviceVerification`） |
 
 ---
 
@@ -108,8 +108,10 @@ https://raw.githubusercontent.com/Seameee/CDT-Monitor/main/egern/dist
 - [x] 独立 `ControlIntent` 校验、policy 纯函数、uncertain 处理
 - [x] 未授权 0 动作的离线测试（C02 系列）
 - [x] 无法满足存储/授权门槛时降级为控制台导航
-- [ ] **真机证明跨执行意图持久化与同目标串行** — **未执行**（需要设备）
-- **门槛**：默认所有控制关闭；离线测试证明未授权 0 动作；真实云动作不用于测试 → 达成（控制未开放）
+- [x] 控制默认关闭，且开启需**显式的真机自证**（`deviceVerification` + `verifiedAt`）
+- [ ] **真机验证跨执行意图持久化与同目标串行** — **未执行**（需要设备）
+- **门槛**：默认所有控制关闭；离线测试证明未授权 0 动作；真实云动作不用于测试 → 达成
+  （控制能力默认关闭，可由用户自证后自行开启；保活定位为"最佳努力"）
 
 ### 阶段 5：文档、CI、版本化产物与验收 — 离线完成
 
