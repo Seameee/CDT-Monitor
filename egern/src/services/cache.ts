@@ -42,7 +42,9 @@ export type CacheKind =
   | "history"
   | "alert"
   | "action-intent"
-  | "intent-consumed";
+  | "intent-consumed"
+  /** Summary of the most recent automation run, for user-visible diagnostics. */
+  | "run-log";
 
 /**
  * Engineering budget for the whole namespace.

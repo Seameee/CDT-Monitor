@@ -18,6 +18,7 @@
 import type { EgernScriptContext } from "../host/types.ts";
 import { prepareRuntime, WIDGET_BUDGET_MS } from "./runtime.ts";
 import { describeCapability } from "../services/control.ts";
+import { readRunLog } from "../services/runlog.ts";
 import type { ConfigIssue } from "../config/env.ts";
 
 /** A single probe result. */
@@ -175,7 +176,7 @@ export default async function main(ctx: EgernScriptContext): Promise<unknown> {
     return renderReport(
       "CDT Monitor 诊断",
       "配置存在错误，以下为该环境的探测结果",
-      [...summarizeIssues(prepared.issues), "— 能力探测 —", ...probes.map(describeProbe)],
+      [...summarizeIssues(prepared.issues), "— 能力探测 —", ...groupProbes(probes)],
       false,
     );
   }
@@ -204,7 +205,11 @@ export default async function main(ctx: EgernScriptContext): Promise<unknown> {
   if (problems.length > 0) {
     lines.push("— 配置问题 —", ...problems);
   }
-  lines.push("— 能力探测 —", ...probes.map(describeProbe));
+  // The last automation run: without it, enabling keep-alive is untestable,
+  // because the schedule entry has no UI of its own.
+  lines.push("— 上次自动策略 —", ...describeLastRun(prepared.runtime));
+
+  lines.push("— 能力探测 —", ...groupProbes(probes));
 
   const healthy = issues.every((issue) => issue.severity !== "error");
   return renderReport(
@@ -213,6 +218,81 @@ export default async function main(ctx: EgernScriptContext): Promise<unknown> {
     lines,
     healthy,
   );
+}
+
+/**
+ * Describe the most recent automation run.
+ *
+ * Reports "no record" distinctly from "ran and did nothing" — conflating the two
+ * would make a silent install look identical to a healthy one.
+ */
+function describeLastRun(
+  runtime: { cache: Parameters<typeof readRunLog>[0]; clock: { now(): Date } },
+): string[] {
+  const entry = readRunLog(runtime.cache);
+  if (entry === null) {
+    return [
+      "暂无记录（等待定时脚本跑过一次）",
+      "注意：跨脚本读取缓存的能力未经实机验证；收不到记录不代表没运行",
+    ];
+  }
+  const lines: string[] = [
+    `运行于 ${entry.at}（${formatAge(entry.at, runtime.clock.now())}）`,
+    `模式：${entry.mode === "live" ? "实际执行" : "仅演练（未声明真机验证，不会写入）"}`,
+    `范围 ${entry.scopeCount} · 实例 ${entry.instanceCount} · 决策 ${entry.decisions.length} · 阻止 ${entry.blocked.length} · 动作 ${entry.writes.length}`,
+  ];
+  for (const decision of entry.decisions) {
+    lines.push(`决策 ${decision.kind}${decision.instanceId === null ? "" : ` ${decision.instanceId}`}`);
+  }
+  for (const write of entry.writes) {
+    lines.push(`动作 ${write.action} → ${write.code}${write.instanceId === null ? "" : ` ${write.instanceId}`}`);
+  }
+  for (const block of entry.blocked.slice(0, 2)) {
+    lines.push(`阻止 ${block.code}：${block.reason}`);
+  }
+  return lines;
+}
+
+/** Compact Chinese age string, e.g. "12 分钟前". */
+function formatAge(iso: string, now: Date): string {
+  const parsed = Date.parse(iso);
+  if (!Number.isFinite(parsed)) return "时间未知";
+  const minutes = Math.floor((now.getTime() - parsed) / 60000);
+  if (minutes < 1) return "刚刚";
+  if (minutes < 60) return `${minutes} 分钟前`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} 小时前`;
+  return `${Math.floor(hours / 24)} 天前`;
+}
+
+/**
+ * Group the probes into a few compact lines.
+ *
+ * Renderng one line per probe overflowed the report budget, which silently
+ * truncated the *configuration* summary — the part the user acts on. Grouping
+ * keeps every result visible in a handful of lines. Returns short status words
+ * only; nothing secret is included.
+ */
+function groupProbes(probes: readonly Probe[]): string[] {
+  const find = (label: string): string => {
+    const probe = probes.find((item) => item.label === label);
+    if (probe === undefined) return "?";
+    // Reduce the verbose per-probe value to a short token.
+    if (probe.value === "可用") return "可用";
+    if (probe.value.startsWith("不可用")) return "无";
+    if (probe.value.startsWith("未提供")) return "未提供";
+    if (probe.value.startsWith("存在")) return "有(不依赖)";
+    if (probe.value.startsWith("同步读写正常")) return "正常";
+    return probe.value.slice(0, 10);
+  };
+
+  return [
+    `全局：crypto=${find("crypto.getRandomValues")} TextEncoder=${find("TextEncoder")} btoa=${find("btoa/atob")} fetch=${find("fetch")}`,
+    `ctx：http=${find("ctx.http")} storage=${find("ctx.storage")} notify=${find("ctx.notify")}`,
+    `上下文：family=${find("ctx.widgetFamily")} cron=${find("ctx.cron")} app=${find("ctx.app.version")}`,
+    `时区：${find("Intl.DateTimeFormat")} · 存储：${find("storage 写入/读回")}`,
+    `Node 全局：${find("Buffer/process")}`,
+  ];
 }
 
 /** Render one probe as a compact line. */

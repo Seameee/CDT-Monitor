@@ -26,6 +26,8 @@ import {
   executeControlIntent,
 } from "../services/control.ts";
 import { dispatchNotification } from "../services/notifications.ts";
+import { writeRunLog } from "../services/runlog.ts";
+import type { RunLogWrite } from "../services/runlog.ts";
 import type { NotificationEvent } from "../services/notifications.ts";
 import { formatPercent } from "../domain/format.ts";
 import {
@@ -86,6 +88,11 @@ export default async function main(ctx: EgernScriptContext): Promise<void> {
   const capability = capabilityFromConfig(config);
   const actionsProven = capability.crossExecutionIntentClaim && capability.hostSerializesSameTarget;
 
+  // Every attempted action is recorded and, when a channel is enabled, pushed as
+  // a notification. Without this the schedule entry would be a black box: the
+  // user could not tell a silent failure from "iOS has not woken it yet".
+  const writes: RunLogWrite[] = [];
+
   for (const decision of result.decisions) {
     if (decision.kind !== "start_instance" && decision.kind !== "stop_instance") continue;
     if (decision.instanceId === null) continue;
@@ -99,10 +106,34 @@ export default async function main(ctx: EgernScriptContext): Promise<void> {
 
     if (!actionsProven) {
       // Withhold and record. No cloud write is issued.
-      cache.write(
-        `blocked:${decision.idempotencyKey}`,
-        "alert",
-        `未执行：${decision.reason}（本地控制能力未验证）`,
+      //
+      // A notification is still sent: without it, a dry run is invisible on the
+      // phone and the user cannot tell a withheld action from a script that
+      // never ran. Repeats are bounded by the action cooldown.
+      const withheld = `未执行：${decision.reason}（本地控制能力未验证，未声明真机验证）`;
+      cache.write(`blocked:${decision.idempotencyKey}`, "alert", withheld, now);
+      writes.push({
+        instanceId: decision.instanceId,
+        action: decision.kind === "start_instance" ? "start" : "stop",
+        code: "Withheld",
+        message: withheld,
+      });
+      const withheldInstance = snapshot.instances.find((item) => item.id === decision.instanceId);
+      await dispatchNotification(
+        notificationDeps,
+        {
+          id: `withheld:${decision.idempotencyKey}`,
+          type: "action",
+          title: `CDT 保活未执行（${withheldInstance?.name ?? decision.instanceId}）`,
+          summary: withheld,
+          fields: {
+            "实例": withheldInstance?.name ?? decision.instanceId,
+            "拟执行": decision.kind === "start_instance" ? "开机" : "关机",
+            "原因": "未声明真机验证",
+          },
+          at: now.toISOString(),
+        },
+        config.notifications,
         now,
       );
       continue;
@@ -116,7 +147,7 @@ export default async function main(ctx: EgernScriptContext): Promise<void> {
     // here instead would make this branch permanently dead and hide the gate.
     const controlProvider = new DirectControlProvider(createRpcDependencies(runtime));
 
-    await executeControlIntent({
+    const outcome = await executeControlIntent({
       intent: {
         schemaVersion: 1,
         nonce: decision.idempotencyKey,
@@ -140,6 +171,37 @@ export default async function main(ctx: EgernScriptContext): Promise<void> {
       },
       now,
     });
+
+    writes.push({
+      instanceId: decision.instanceId,
+      action: decision.kind === "start_instance" ? "start" : "stop",
+      code: outcome.code,
+      message: outcome.message,
+    });
+
+    // Notify on every action attempt, so the result is visible on the phone
+    // without opening the app. `action` events are not de-duplicated, because
+    // each attempt genuinely happened.
+    await dispatchNotification(
+      notificationDeps,
+      {
+        id: `action:${decision.idempotencyKey}`,
+        type: "action",
+        title:
+          decision.kind === "start_instance"
+            ? `CDT 保活：已发送开机指令（${instance.name}）`
+            : `CDT 已发送关机指令（${instance.name}）`,
+        summary: outcome.message,
+        fields: {
+          "实例": instance.name,
+          "动作": decision.kind === "start_instance" ? "开机" : "关机",
+          "结果": outcome.code,
+        },
+        at: now.toISOString(),
+      },
+      config.notifications,
+      now,
+    );
   }
 
   // Persist why anything was withheld, so the reason is visible rather than
@@ -147,6 +209,31 @@ export default async function main(ctx: EgernScriptContext): Promise<void> {
   for (const block of result.blocked.slice(0, 5)) {
     cache.write(`blocked:${block.entityId}:${block.code}`, "alert", block.reason, now);
   }
+
+  // Always record the run, even when nothing happened: "ran at 14:05, nothing to
+  // do" is exactly what distinguishes a working install from a silent one.
+  writeRunLog(
+    cache,
+    {
+      at: now.toISOString(),
+      mode: actionsProven ? "live" : "dry-run",
+      scopeCount: snapshot.trafficScopes.length,
+      instanceCount: snapshot.instances.length,
+      decisions: result.decisions.map((decision) => ({
+        kind: decision.kind,
+        instanceId: decision.instanceId,
+        scopeId: decision.scopeId,
+        reason: decision.reason,
+      })),
+      blocked: result.blocked.map((block) => ({
+        entityId: block.entityId,
+        code: block.code,
+        reason: block.reason,
+      })),
+      writes,
+    },
+    now,
+  );
 }
 
 /**

@@ -82,8 +82,8 @@
     {
       "name": "cdt-diagnostics.js",
       "kind": "read",
-      "bytes": 59966,
-      "sha256": "09d955bacb26e31e5217ec15fe7c8aaf8414d0d731a7e1de1793af958ce00af6",
+      "bytes": 64979,
+      "sha256": "4dbc36807cd1f0b30b60cb400cd3b594b6207cc9662ec0399a2e9ccbc98d7b69",
       "inputs": [
         "src/domain/usage.ts",
         "src/domain/models.ts",
@@ -107,6 +107,7 @@
         "src/entries/runtime.ts",
         "src/domain/policy.ts",
         "src/services/control.ts",
+        "src/services/runlog.ts",
         "src/entries/diagnostics.ts"
       ]
     },
@@ -147,8 +148,8 @@
     {
       "name": "cdt-automation.js",
       "kind": "write",
-      "bytes": 140780,
-      "sha256": "02b1628c451dde4bedaef243ac01b6ce41a199b0b1e5454439b37f9117e0c5ce",
+      "bytes": 143623,
+      "sha256": "f321cda4cbdd19b4a701827f1a9f486977567de0710d841f3805281133ee3bdd",
       "inputs": [
         "src/domain/models.ts",
         "src/domain/schedule.ts",
@@ -162,6 +163,7 @@
         "src/services/control.ts",
         "src/domain/format.ts",
         "src/services/notifications.ts",
+        "src/services/runlog.ts",
         "src/host/crypto.ts",
         "src/providers/cdt-server.ts",
         "src/config/env.ts",

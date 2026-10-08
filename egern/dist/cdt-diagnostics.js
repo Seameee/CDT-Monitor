@@ -1616,6 +1616,78 @@ function describeCapability(config) {
   return `未验证（缺少：${missing.join("、")}）`;
 }
 
+// src/services/runlog.ts
+var RUN_LOG_ENTITY = "automation";
+function isStringArray(value) {
+  return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
+function validateRunLog(value) {
+  if (value === null || typeof value !== "object") return null;
+  const record = value;
+  if (typeof record["at"] !== "string") return null;
+  const mode = record["mode"];
+  if (mode !== "dry-run" && mode !== "live") return null;
+  if (typeof record["scopeCount"] !== "number" || typeof record["instanceCount"] !== "number") {
+    return null;
+  }
+  const decisions = [];
+  if (Array.isArray(record["decisions"])) {
+    for (const item of record["decisions"]) {
+      if (item === null || typeof item !== "object") return null;
+      const entry = item;
+      if (typeof entry["kind"] !== "string" || typeof entry["reason"] !== "string") return null;
+      decisions.push({
+        kind: entry["kind"],
+        instanceId: typeof entry["instanceId"] === "string" ? entry["instanceId"] : null,
+        scopeId: typeof entry["scopeId"] === "string" ? entry["scopeId"] : null,
+        reason: entry["reason"]
+      });
+    }
+  }
+  const blocked = [];
+  if (Array.isArray(record["blocked"])) {
+    for (const item of record["blocked"]) {
+      if (item === null || typeof item !== "object") return null;
+      const entry = item;
+      if (typeof entry["entityId"] !== "string" || typeof entry["code"] !== "string" || typeof entry["reason"] !== "string") {
+        return null;
+      }
+      blocked.push({
+        entityId: entry["entityId"],
+        code: entry["code"],
+        reason: entry["reason"]
+      });
+    }
+  }
+  const writes = [];
+  if (Array.isArray(record["writes"])) {
+    for (const item of record["writes"]) {
+      if (item === null || typeof item !== "object") return null;
+      const entry = item;
+      if (typeof entry["action"] !== "string" || typeof entry["code"] !== "string") return null;
+      if (typeof entry["message"] !== "string") return null;
+      writes.push({
+        instanceId: typeof entry["instanceId"] === "string" ? entry["instanceId"] : null,
+        action: entry["action"],
+        code: entry["code"],
+        message: entry["message"]
+      });
+    }
+  }
+  return {
+    at: record["at"],
+    mode,
+    scopeCount: record["scopeCount"],
+    instanceCount: record["instanceCount"],
+    decisions,
+    blocked,
+    writes
+  };
+}
+function readRunLog(cache) {
+  return cache.read(RUN_LOG_ENTITY, "run-log", validateRunLog);
+}
+
 // src/entries/diagnostics.ts
 function detectGlobal(name) {
   try {
@@ -1723,7 +1795,7 @@ async function main(ctx) {
     return renderReport(
       "CDT Monitor 诊断",
       "配置存在错误，以下为该环境的探测结果",
-      [...summarizeIssues(prepared.issues), "— 能力探测 —", ...probes.map(describeProbe)],
+      [...summarizeIssues(prepared.issues), "— 能力探测 —", ...groupProbes(probes)],
       false
     );
   }
@@ -1741,7 +1813,8 @@ async function main(ctx) {
   if (problems.length > 0) {
     lines.push("— 配置问题 —", ...problems);
   }
-  lines.push("— 能力探测 —", ...probes.map(describeProbe));
+  lines.push("— 上次自动策略 —", ...describeLastRun(prepared.runtime));
+  lines.push("— 能力探测 —", ...groupProbes(probes));
   const healthy = issues.every((issue) => issue.severity !== "error");
   return renderReport(
     "CDT Monitor 诊断",
@@ -1750,8 +1823,58 @@ async function main(ctx) {
     healthy
   );
 }
-function describeProbe(probe) {
-  return `${probe.label}：${probe.value}`;
+function describeLastRun(runtime) {
+  const entry = readRunLog(runtime.cache);
+  if (entry === null) {
+    return [
+      "暂无记录（等待定时脚本跑过一次）",
+      "注意：跨脚本读取缓存的能力未经实机验证；收不到记录不代表没运行"
+    ];
+  }
+  const lines = [
+    `运行于 ${entry.at}（${formatAge(entry.at, runtime.clock.now())}）`,
+    `模式：${entry.mode === "live" ? "实际执行" : "仅演练（未声明真机验证，不会写入）"}`,
+    `范围 ${entry.scopeCount} · 实例 ${entry.instanceCount} · 决策 ${entry.decisions.length} · 阻止 ${entry.blocked.length} · 动作 ${entry.writes.length}`
+  ];
+  for (const decision of entry.decisions) {
+    lines.push(`决策 ${decision.kind}${decision.instanceId === null ? "" : ` ${decision.instanceId}`}`);
+  }
+  for (const write of entry.writes) {
+    lines.push(`动作 ${write.action} → ${write.code}${write.instanceId === null ? "" : ` ${write.instanceId}`}`);
+  }
+  for (const block of entry.blocked.slice(0, 2)) {
+    lines.push(`阻止 ${block.code}：${block.reason}`);
+  }
+  return lines;
+}
+function formatAge(iso, now) {
+  const parsed = Date.parse(iso);
+  if (!Number.isFinite(parsed)) return "时间未知";
+  const minutes = Math.floor((now.getTime() - parsed) / 6e4);
+  if (minutes < 1) return "刚刚";
+  if (minutes < 60) return `${minutes} 分钟前`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} 小时前`;
+  return `${Math.floor(hours / 24)} 天前`;
+}
+function groupProbes(probes) {
+  const find = (label) => {
+    const probe = probes.find((item) => item.label === label);
+    if (probe === void 0) return "?";
+    if (probe.value === "可用") return "可用";
+    if (probe.value.startsWith("不可用")) return "无";
+    if (probe.value.startsWith("未提供")) return "未提供";
+    if (probe.value.startsWith("存在")) return "有(不依赖)";
+    if (probe.value.startsWith("同步读写正常")) return "正常";
+    return probe.value.slice(0, 10);
+  };
+  return [
+    `全局：crypto=${find("crypto.getRandomValues")} TextEncoder=${find("TextEncoder")} btoa=${find("btoa/atob")} fetch=${find("fetch")}`,
+    `ctx：http=${find("ctx.http")} storage=${find("ctx.storage")} notify=${find("ctx.notify")}`,
+    `上下文：family=${find("ctx.widgetFamily")} cron=${find("ctx.cron")} app=${find("ctx.app.version")}`,
+    `时区：${find("Intl.DateTimeFormat")} · 存储：${find("storage 写入/读回")}`,
+    `Node 全局：${find("Buffer/process")}`
+  ];
 }
 function renderReport(title, subtitle, lines, healthy) {
   const children = [

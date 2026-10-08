@@ -349,3 +349,163 @@ test("the control entry with a valid intent still performs no write while capabi
     assert.notEqual(action, "StopInstance");
   }
 });
+
+/* ------------------- automation observability (the test aid) -------------- */
+
+/** The raw cache key the automation run log is written to. */
+const RUN_LOG_KEY = "cdt:egern:v1:default:direct:automation:run-log";
+
+/** Read the run log envelope straight from the fake storage. */
+function storedRunLog(storage: { get(key: string): string | null }): Record<string, unknown> | null {
+  const raw = storage.get(RUN_LOG_KEY);
+  if (raw === null) return null;
+  const envelope = JSON.parse(raw) as Record<string, unknown>;
+  return envelope["data"] as Record<string, unknown>;
+}
+
+test("automation records a run even when it decides to do nothing", async () => {
+  // Control enabled, instance running (so keep-alive does not apply) and no
+  // threshold breach: the run genuinely has nothing to do.
+  const fake = createFakeContext({
+    env: baseEnv({
+      CDT_CONTROL_JSON: JSON.stringify({
+        schemaVersion: 1,
+        enabled: true,
+        credentialId: "cred-main",
+        allowedInstanceIds: ["instance-main"],
+        instances: [
+          { instanceId: "instance-main", keepAlive: true, scheduleControlEnabled: false, shutdownMode: "KeepCharging" },
+        ],
+        scopes: [],
+      }),
+    }),
+    responder: aliyunResponder,
+    cron: "*/5 * * * *",
+  });
+  await automationEntry(fake.ctx);
+
+  const log = storedRunLog(fake.storage);
+  // "ran and did nothing" must be distinguishable from "never ran".
+  assert.ok(log !== null, "a run must always be recorded");
+  assert.equal(log?.["mode"], "dry-run");
+  assert.equal(log?.["instanceCount"], 1);
+  assert.equal(log?.["version"], undefined);
+});
+
+test("a withheld keep-alive is recorded as Withheld in dry-run mode", async () => {
+  const fake = createFakeContext({
+    env: baseEnv({
+      CDT_CONTROL_JSON: JSON.stringify({
+        schemaVersion: 1,
+        enabled: true,
+        credentialId: "cred-main",
+        allowedInstanceIds: ["instance-main"],
+        instances: [
+          { instanceId: "instance-main", keepAlive: true, scheduleControlEnabled: false, shutdownMode: "KeepCharging" },
+        ],
+        scopes: [],
+      }),
+    }),
+    responder: stoppedResponder,
+    cron: "*/5 * * * *",
+  });
+  await automationEntry(fake.ctx);
+
+  const log = storedRunLog(fake.storage);
+  assert.ok(log !== null);
+  // Without the device attestation the run is a dry run...
+  assert.equal(log?.["mode"], "dry-run");
+  const decisions = log?.["decisions"] as Array<Record<string, unknown>>;
+  assert.ok(decisions.some((entry) => entry["kind"] === "start_instance"), "keep-alive was not decided");
+  const writes = log?.["writes"] as Array<Record<string, unknown>>;
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0]?.["code"], "Withheld");
+  assert.equal(writes[0]?.["action"], "start");
+  // ...and no cloud write happened.
+  assert.ok(!actionsIn(fake.requests).includes("StartInstance"));
+});
+
+/**
+ * A responder that deliberately ACCEPTS instance writes.
+ *
+ * The other responders reject every write, so that an accidental write is caught.
+ * This one exists only for the test that asserts a write is intentionally made.
+ */
+function writableResponder(request: RecordedRequest): { status: number; body: string } {
+  const action = request.form?.["Action"] ?? "";
+  if (action === "StartInstance" || action === "StopInstance") {
+    return { status: 200, body: JSON.stringify({ RequestId: "r" }) };
+  }
+  return stoppedResponder(request);
+}
+
+test("an attested run is recorded as live", async () => {
+  const fake = createFakeContext({
+    env: baseEnv({
+      CDT_CONTROL_JSON: JSON.stringify({
+        schemaVersion: 1,
+        enabled: true,
+        deviceVerification: {
+          crossExecutionIntentClaim: true,
+          hostSerializesSameTarget: true,
+          verifiedAt: "2026-10-09T00:00:00Z",
+        },
+        credentialId: "cred-main",
+        allowedInstanceIds: ["instance-main"],
+        instances: [
+          { instanceId: "instance-main", keepAlive: true, scheduleControlEnabled: false, shutdownMode: "KeepCharging" },
+        ],
+        scopes: [],
+      }),
+    }),
+    responder: writableResponder,
+    cron: "*/5 * * * *",
+  });
+  await automationEntry(fake.ctx);
+
+  const log = storedRunLog(fake.storage);
+  assert.equal(log?.["mode"], "live");
+  const writes = log?.["writes"] as Array<Record<string, unknown>>;
+  // The write went out and its outcome was kept, rather than discarded.
+  assert.equal(writes[0]?.["code"], "Accepted");
+  assert.ok(actionsIn(fake.requests).includes("StartInstance"));
+});
+
+test("an action attempt raises a notification so it is visible on the phone", async () => {
+  const fake = createFakeContext({
+    env: baseEnv({
+      CDT_LOCAL_NOTIFY: "true",
+      CDT_CONTROL_JSON: JSON.stringify({
+        schemaVersion: 1,
+        enabled: true,
+        deviceVerification: {
+          crossExecutionIntentClaim: true,
+          hostSerializesSameTarget: true,
+          verifiedAt: "2026-10-09T00:00:00Z",
+        },
+        credentialId: "cred-main",
+        allowedInstanceIds: ["instance-main"],
+        instances: [
+          { instanceId: "instance-main", keepAlive: true, scheduleControlEnabled: false, shutdownMode: "KeepCharging" },
+        ],
+        scopes: [],
+      }),
+    }),
+    responder: writableResponder,
+    cron: "*/5 * * * *",
+  });
+  await automationEntry(fake.ctx);
+  assert.ok(
+    fake.notifications.some((item) => item.title.includes("保活")),
+    `expected a keep-alive notification, got ${JSON.stringify(fake.notifications)}`,
+  );
+});
+
+test("diagnostics says 'no record' rather than implying nothing happened", async () => {
+  const fake = createFakeContext({ env: baseEnv(), responder: aliyunResponder });
+  const result = await diagnosticsEntry(fake.ctx);
+  const text = JSON.stringify(result);
+  assert.ok(text.includes("暂无记录"));
+  // And it must own the cross-context caveat rather than hide it.
+  assert.ok(text.includes("未") && text.includes("验证"));
+});

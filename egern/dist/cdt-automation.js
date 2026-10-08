@@ -1472,6 +1472,28 @@ async function sendWebhook(deps, event, config) {
   }
 }
 
+// src/services/runlog.ts
+var RUN_LOG_ENTITY = "automation";
+var MAX_DECISIONS = 4;
+var MAX_BLOCKS = 4;
+var MAX_WRITES = 4;
+function writeRunLog(cache, entry, now) {
+  cache.write(
+    RUN_LOG_ENTITY,
+    "run-log",
+    {
+      at: entry.at,
+      mode: entry.mode,
+      scopeCount: entry.scopeCount,
+      instanceCount: entry.instanceCount,
+      decisions: entry.decisions.slice(0, MAX_DECISIONS),
+      blocked: entry.blocked.slice(0, MAX_BLOCKS),
+      writes: entry.writes.slice(0, MAX_WRITES)
+    },
+    now
+  );
+}
+
 // src/host/crypto.ts
 var SHA1_BLOCK_BYTES = 64;
 var SHA1_DIGEST_BYTES = 20;
@@ -4016,6 +4038,7 @@ async function main(ctx) {
   }
   const capability = capabilityFromConfig(config);
   const actionsProven = capability.crossExecutionIntentClaim && capability.hostSerializesSameTarget;
+  const writes = [];
   for (const decision of result.decisions) {
     if (decision.kind !== "start_instance" && decision.kind !== "stop_instance") continue;
     if (decision.instanceId === null) continue;
@@ -4023,10 +4046,30 @@ async function main(ctx) {
       continue;
     }
     if (!actionsProven) {
-      cache.write(
-        `blocked:${decision.idempotencyKey}`,
-        "alert",
-        `未执行：${decision.reason}（本地控制能力未验证）`,
+      const withheld = `未执行：${decision.reason}（本地控制能力未验证，未声明真机验证）`;
+      cache.write(`blocked:${decision.idempotencyKey}`, "alert", withheld, now);
+      writes.push({
+        instanceId: decision.instanceId,
+        action: decision.kind === "start_instance" ? "start" : "stop",
+        code: "Withheld",
+        message: withheld
+      });
+      const withheldInstance = snapshot.instances.find((item) => item.id === decision.instanceId);
+      await dispatchNotification(
+        notificationDeps,
+        {
+          id: `withheld:${decision.idempotencyKey}`,
+          type: "action",
+          title: `CDT 保活未执行（${withheldInstance?.name ?? decision.instanceId}）`,
+          summary: withheld,
+          fields: {
+            "实例": withheldInstance?.name ?? decision.instanceId,
+            "拟执行": decision.kind === "start_instance" ? "开机" : "关机",
+            "原因": "未声明真机验证"
+          },
+          at: now.toISOString()
+        },
+        config.notifications,
         now
       );
       continue;
@@ -4034,7 +4077,7 @@ async function main(ctx) {
     const instance = snapshot.instances.find((item) => item.id === decision.instanceId);
     if (instance === void 0) continue;
     const controlProvider = new DirectControlProvider(createRpcDependencies(runtime));
-    await executeControlIntent({
+    const outcome = await executeControlIntent({
       intent: {
         schemaVersion: 1,
         nonce: decision.idempotencyKey,
@@ -4058,10 +4101,55 @@ async function main(ctx) {
       },
       now
     });
+    writes.push({
+      instanceId: decision.instanceId,
+      action: decision.kind === "start_instance" ? "start" : "stop",
+      code: outcome.code,
+      message: outcome.message
+    });
+    await dispatchNotification(
+      notificationDeps,
+      {
+        id: `action:${decision.idempotencyKey}`,
+        type: "action",
+        title: decision.kind === "start_instance" ? `CDT 保活：已发送开机指令（${instance.name}）` : `CDT 已发送关机指令（${instance.name}）`,
+        summary: outcome.message,
+        fields: {
+          "实例": instance.name,
+          "动作": decision.kind === "start_instance" ? "开机" : "关机",
+          "结果": outcome.code
+        },
+        at: now.toISOString()
+      },
+      config.notifications,
+      now
+    );
   }
   for (const block of result.blocked.slice(0, 5)) {
     cache.write(`blocked:${block.entityId}:${block.code}`, "alert", block.reason, now);
   }
+  writeRunLog(
+    cache,
+    {
+      at: now.toISOString(),
+      mode: actionsProven ? "live" : "dry-run",
+      scopeCount: snapshot.trafficScopes.length,
+      instanceCount: snapshot.instances.length,
+      decisions: result.decisions.map((decision) => ({
+        kind: decision.kind,
+        instanceId: decision.instanceId,
+        scopeId: decision.scopeId,
+        reason: decision.reason
+      })),
+      blocked: result.blocked.map((block) => ({
+        entityId: block.entityId,
+        code: block.code,
+        reason: block.reason
+      })),
+      writes
+    },
+    now
+  );
 }
 function claimDecision(cache, key, cooldownSeconds, now) {
   const previous = cache.read(
