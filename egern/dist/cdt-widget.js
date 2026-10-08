@@ -994,13 +994,20 @@ function buildViewModel(options) {
       // Truncation happens on code points, so an emoji or CJK name is never
       // split into a replacement glyph.
       name: truncateName(instance.name, 18),
-      statusText: instanceStatusLabel(instance.status),
+      statusText: instance.statusError === null ? instanceStatusLabel(instance.status) : `${instanceStatusLabel(instance.status)}（待确认）`,
       status: instance.status,
-      state: instance.status === "Running" ? "ok" : instance.status === "Stopped" ? "muted" : instance.status === "Unknown" ? "warning" : "warning",
+      state: (
+        // An unconfirmed state is always a warning: the colour must not imply
+        // certainty the data does not have.
+        instance.statusError !== null ? "warning" : instance.status === "Running" ? "ok" : instance.status === "Stopped" ? "muted" : "warning"
+      ),
       costText: instance.monthlyCost === null ? null : formatMoney(instance.monthlyCost, instance.currency)
     });
     instanceRows.set(instance.trafficScopeId, rows);
   }
+  const statusUnconfirmed = new Set(
+    snapshot.instances.filter((instance) => instance.statusError !== null).map((instance) => instance.trafficScopeId)
+  );
   const scopes = snapshot.trafficScopes.map((scope) => {
     const history = histories.get(scope.id);
     const stale = scope.stale || scope.trafficError !== null;
@@ -1019,6 +1026,9 @@ function buildViewModel(options) {
     }
     if (scope.overThreshold === false && scope.trafficError === null && scope.freshnessQuality !== "measured") {
       qualityNotes.push("服务器时间戳不作为云端采样时间");
+    }
+    if (statusUnconfirmed.has(scope.id)) {
+      qualityNotes.push("实例状态查询失败，显示的是上次已知状态");
     }
     return {
       scopeId: scope.id,

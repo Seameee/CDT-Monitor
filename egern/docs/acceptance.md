@@ -13,7 +13,7 @@
 | 命令 | 结果 |
 | --- | --- |
 | `npm run typecheck` | 退出码 0 |
-| `npm test` | **216 项通过 / 0 失败** |
+| `npm test` | **218 项通过 / 0 失败** |
 | `npm run build` | 生成 5 脚本 + 1 模块 + `manifest.json` |
 | `npm run check:modules` | 通过 |
 | `npm run check:bundles` | 通过（含读写边界断言） |
@@ -75,6 +75,7 @@
 | 7 个 family 与所有异常状态返回合法节点/属性 | 通过（`tests/widget.test.ts`，枚举全部 7 family × 多状态） |
 | 未知 family 安全降级 | 通过 |
 | 长名称、超 100%、无配额、无历史、0 余额均无 NaN/Infinity/undefined | 通过（逐 family × 逐状态扫描全部字符串） |
+| 实例状态查询失败时标记为「待确认」，不把旧状态当作当前状态展示 | 通过 |
 | 快照/日志/错误/manifest/fixture/SVG/widget.url 无敏感凭据 | 通过（诊断与通知均断言不含秘密） |
 | 不把 Node 渲染验证当作 iOS 实际布局验证 | 遵守：布局仅为离线 DSL 断言，实机排版未验证 |
 

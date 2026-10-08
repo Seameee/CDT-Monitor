@@ -324,3 +324,31 @@ test("the primary scope honours the widget-level selection", () => {
   // Falls back to the first scope for rendering, and the model reports it.
   assert.equal(selectPrimaryScope(snapshot(), missing)?.id, "main-overseas");
 });
+
+test("a failed status read marks the instance state as unconfirmed", () => {
+  const snap = snapshot({
+    instances: [
+      instanceSnapshot({
+        status: "Stopping",
+        statusError: { code: "NetworkError", message: "查询失败", at: NOW.toISOString(), retryable: true },
+      }),
+    ],
+  });
+  const { model, node } = render(snap, "systemMedium");
+  const row = model.scopes[0]?.instances[0];
+  // Showing a stale "stopping" as if it were current is exactly what makes a
+  // user think the instance is stuck while nothing is being done about it.
+  assert.equal(row?.statusText, "停止中（待确认）");
+  assert.equal(row?.state, "warning");
+  assert.ok(model.scopes[0]?.qualityNote?.includes("实例状态查询失败"));
+  assert.ok(allStrings(node).some((value) => value.includes("待确认")));
+});
+
+test("a confirmed stopping instance is shown without a caveat", () => {
+  const snap = snapshot({ instances: [instanceSnapshot({ status: "Stopping" })] });
+  const { model } = render(snap, "systemMedium");
+  const row = model.scopes[0]?.instances[0];
+  assert.equal(row?.statusText, "停止中");
+  assert.equal(row?.state, "warning");
+  assert.ok(!model.scopes[0]?.qualityNote?.includes("查询失败"));
+});

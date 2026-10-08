@@ -5,15 +5,15 @@
   "ref": "main",
   "repoSlug": "Seameee/CDT-Monitor",
   "releaseBaseUrl": "https://raw.githubusercontent.com/Seameee/CDT-Monitor/main/egern/dist",
-  "generatedAt": "2026-10-08T00:43:56.000Z",
+  "generatedAt": "2026-10-08T00:53:28.000Z",
   "esbuildTarget": "es2020",
   "minified": false,
   "scripts": [
     {
       "name": "cdt-widget.js",
       "kind": "read",
-      "bytes": 152662,
-      "sha256": "42b809cf5f3fbc57e9a9a1809ca27911273c050997b4af0555b17d36e9f93a21",
+      "bytes": 153190,
+      "sha256": "af36432f95293d5feaef4714beb6d39e3ad4c75b81ce300b48c3d62a9e9b5fe2",
       "inputs": [
         "src/host/types.ts",
         "src/domain/models.ts",

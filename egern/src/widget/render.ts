@@ -181,15 +181,20 @@ export function buildViewModel(options: ViewModelOptions): WidgetViewModel {
       // Truncation happens on code points, so an emoji or CJK name is never
       // split into a replacement glyph.
       name: truncateName(instance.name, 18),
-      statusText: instanceStatusLabel(instance.status),
+      statusText:
+        instance.statusError === null
+          ? instanceStatusLabel(instance.status)
+          : `${instanceStatusLabel(instance.status)}（待确认）`,
       status: instance.status,
       state:
-        instance.status === "Running"
-          ? "ok"
-          : instance.status === "Stopped"
-            ? "muted"
-            : instance.status === "Unknown"
-              ? "warning"
+        // An unconfirmed state is always a warning: the colour must not imply
+        // certainty the data does not have.
+        instance.statusError !== null
+          ? "warning"
+          : instance.status === "Running"
+            ? "ok"
+            : instance.status === "Stopped"
+              ? "muted"
               : "warning",
       costText:
         instance.monthlyCost === null
@@ -198,6 +203,15 @@ export function buildViewModel(options: ViewModelOptions): WidgetViewModel {
     });
     instanceRows.set(instance.trafficScopeId, rows);
   }
+
+  // A failed status read keeps the last known state on screen. Without saying so,
+  // a stale "stopping" is indistinguishable from a real one, and the user is left
+  // wondering why nothing is happening.
+  const statusUnconfirmed = new Set(
+    snapshot.instances
+      .filter((instance) => instance.statusError !== null)
+      .map((instance) => instance.trafficScopeId),
+  );
 
   const scopes: ScopeView[] = snapshot.trafficScopes.map((scope) => {
     const history = histories.get(scope.id);
@@ -220,6 +234,9 @@ export function buildViewModel(options: ViewModelOptions): WidgetViewModel {
     }
     if (scope.overThreshold === false && scope.trafficError === null && scope.freshnessQuality !== "measured") {
       qualityNotes.push("服务器时间戳不作为云端采样时间");
+    }
+    if (statusUnconfirmed.has(scope.id)) {
+      qualityNotes.push("实例状态查询失败，显示的是上次已知状态");
     }
 
     return {
