@@ -910,7 +910,7 @@ function computeConfigFingerprint(config) {
   };
   return fnv1aHex(JSON.stringify(identity));
 }
-function parseControlConfig(value, knownCredentialIds, knownInstanceIds, issues) {
+function parseControlConfig(value, knownCredentialIds, knownInstanceIds, knownScopeIds, issues) {
   const config = emptyControlConfig();
   if (value === void 0) return config;
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
@@ -932,9 +932,10 @@ function parseControlConfig(value, knownCredentialIds, knownInstanceIds, issues)
     "instances",
     "actionCooldownSeconds",
     "pauseUntil",
-    // Shorthands for the common single-instance case.
+    // Shorthands for the common single-instance / single-scope case.
     "verifiedOnDevice",
-    "keepAlive"
+    "keepAlive",
+    "stopWhenOverThreshold"
   ];
   for (const key of Object.keys(record)) {
     if (!knownKeys.includes(key)) {
@@ -1208,6 +1209,47 @@ function parseControlConfig(value, knownCredentialIds, knownInstanceIds, issues)
       }
     ];
   }
+  const stopShorthand = record["stopWhenOverThreshold"];
+  if (stopShorthand !== void 0) {
+    if (typeof stopShorthand !== "boolean") {
+      issues.error("CDT_CONTROL_JSON.stopWhenOverThreshold", "stopWhenOverThreshold 必须是布尔值，控制保持关闭");
+      config.enabled = false;
+      return config;
+    }
+    if (record["scopes"] !== void 0) {
+      issues.error(
+        "CDT_CONTROL_JSON.stopWhenOverThreshold",
+        "stopWhenOverThreshold 简写不能与 scopes 同时使用，控制保持关闭"
+      );
+      config.enabled = false;
+      return config;
+    }
+    if (knownScopeIds.length === 0) {
+      issues.error(
+        "CDT_CONTROL_JSON.stopWhenOverThreshold",
+        "没有可保护的流量范围，控制保持关闭"
+      );
+      config.enabled = false;
+      return config;
+    }
+    if (knownScopeIds.length > 1) {
+      issues.error(
+        "CDT_CONTROL_JSON.stopWhenOverThreshold",
+        `配置了 ${knownScopeIds.length} 个流量范围，简写无法确定目标；请显式列出 scopes`
+      );
+      config.enabled = false;
+      return config;
+    }
+    config.scopes = [
+      {
+        scopeId: knownScopeIds[0],
+        // The shorthand exists precisely to turn stopping on, so it sets both
+        // fields the gate requires. `thresholdAction` alone would not be enough.
+        thresholdStopEnabled: stopShorthand === true,
+        thresholdAction: stopShorthand === true ? "stop_and_notify" : "notify_only"
+      }
+    ];
+  }
   for (const policy of config.instances) {
     if (!config.allowedInstanceIds.includes(policy.instanceId)) {
       issues.error(
@@ -1376,12 +1418,26 @@ function parseConfig(env, view = readViewSelection(env)) {
   }
   const knownCredentialIds = credentials.map((credential) => credential.id);
   const knownInstanceIds = instances.map((instance) => instance.id);
+  const knownScopeIds = trafficScopes.map((scope) => scope.id);
   const control = parseControlConfig(
     readJson(env, ENV_KEYS.controlJson, issues),
     knownCredentialIds,
     knownInstanceIds,
+    knownScopeIds,
     issues
   );
+  if (mode === "direct" && control.enabled) {
+    for (const scopePolicy of control.scopes) {
+      if (!scopePolicy.thresholdStopEnabled) continue;
+      const scope = trafficScopes.find((item) => item.id === scopePolicy.scopeId);
+      if (scope !== void 0 && scope.quota === null) {
+        issues.error(
+          ENV_KEYS.controlJson,
+          `范围 ${scopePolicy.scopeId} 开启了阈值停机，但 direct 模式没有可用上限；请填写 CDT_QUOTA`
+        );
+      }
+    }
+  }
   if (mode === "server" && control.enabled) {
     issues.error(
       ENV_KEYS.controlJson,

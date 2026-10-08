@@ -685,3 +685,62 @@ test("a policy for an instance that is not allow-listed is refused", () => {
   assert.equal(outcome.ok, false);
   assert.ok(outcome.issues.some((issue) => issue.message.includes("allowedInstanceIds")));
 });
+
+test("the stopWhenOverThreshold shorthand enables protection for the only scope", () => {
+  const outcome = parseConfig({
+    ...MINIMAL_ENV,
+    CDT_QUOTA: "200",
+    CDT_CONTROL_JSON: JSON.stringify({
+      schemaVersion: 1,
+      enabled: true,
+      verifiedOnDevice: "2026-10-09",
+      keepAlive: true,
+      stopWhenOverThreshold: true,
+    }),
+  });
+  assert.equal(outcome.ok, true, JSON.stringify(!outcome.ok ? outcome.issues : []));
+  if (!outcome.ok) return;
+  const scopes = outcome.config.control.scopes;
+  assert.equal(scopes.length, 1);
+  // Both fields the gate requires must be set, or the shorthand would do nothing.
+  assert.equal(scopes[0]?.thresholdStopEnabled, true);
+  assert.equal(scopes[0]?.thresholdAction, "stop_and_notify");
+  assert.equal(scopes[0]?.scopeId, "scope-main-overseas");
+});
+
+test("the shorthand can coexist with keepAlive but not with explicit scopes", () => {
+  const withKeepAlive = parseConfig({
+    ...MINIMAL_ENV,
+    CDT_QUOTA: "200",
+    CDT_CONTROL_JSON: JSON.stringify({
+      schemaVersion: 1, enabled: true, verifiedOnDevice: "2026-10-09",
+      keepAlive: true, stopWhenOverThreshold: true,
+    }),
+  });
+  assert.equal(withKeepAlive.ok, true);
+
+  const bothForms = parseConfig({
+    ...MINIMAL_ENV,
+    CDT_QUOTA: "200",
+    CDT_CONTROL_JSON: JSON.stringify({
+      schemaVersion: 1, enabled: true, verifiedOnDevice: "2026-10-09",
+      stopWhenOverThreshold: true,
+      scopes: [{ scopeId: "scope-main-overseas", thresholdStopEnabled: true, thresholdAction: "stop_and_notify" }],
+    }),
+  });
+  assert.equal(bothForms.ok, false);
+});
+
+test("threshold protection without a quota is refused rather than silently inert", () => {
+  // No CDT_QUOTA: overThreshold can never be computed, so the protection could
+  // never fire. Refusing beats shipping a safety feature that does nothing.
+  const outcome = parseConfig({
+    ...MINIMAL_ENV,
+    CDT_CONTROL_JSON: JSON.stringify({
+      schemaVersion: 1, enabled: true, verifiedOnDevice: "2026-10-09",
+      stopWhenOverThreshold: true,
+    }),
+  });
+  assert.equal(outcome.ok, false);
+  assert.ok(outcome.issues.some((issue) => issue.message.includes("CDT_QUOTA")));
+});

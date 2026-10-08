@@ -200,6 +200,41 @@ widget 会永久空白。该降级方向是刻意选择的。
 如果只在意耗电而不在意恢复速度，也可以直接把模块的 `cron` 改大（需要改成**本地模块**，
 因为 URL 安装的模块无法编辑）。
 
+### 阈值停机（超阈值自动停止）
+
+**默认关闭。** 需要同时满足两个条件才会生效：
+
+```ts
+stopEnabled = thresholdStopEnabled === true && thresholdAction === "stop_and_notify"
+```
+
+一行配置的推荐写法是顶层简写 `"stopWhenOverThreshold": true`，它会展开成
+`scopes: [{ scopeId: <唯一范围>, thresholdStopEnabled: true, thresholdAction: "stop_and_notify" }]`。
+
+**生效期间的行为**：
+
+| 情形 | 行为 |
+| --- | --- |
+| 读数超阈值 | 下发 `stop_instance`，理由「流量超过阈值，执行保护停机（X%）」 |
+| 保活 | **被禁止**，记 `ProtectionActive` |
+| 计划开机 | 被阻止 |
+| 一次性开机意图 | **直接拒绝**（越过保护需要单独的一次性限时 override） |
+| 超阈值时又被启动 | **再次停机**（幂等键绑定观测值，而非单次事件） |
+
+**解除条件**：不是"等下一次刷新"（刷新只会再次看到超阈值），而是**读数回落到阈值以下**，
+实践中即账单周期重置或调高 `CDT_QUOTA`。即：**这是故意把机器留在停机状态**。
+
+**两个前提与限制**：
+
+1. **必须能算出百分比**。direct 模式唯一的上限来源是 `CDT_QUOTA`；没有它 `overThreshold`
+   恒为 `null`，保护永不触发。因此本项目**直接报错**而不是留一个静默失效的安全功能。
+2. **周期口径未核实**。`ListCdtInternetTraffic` 没有周期参数，direct 模式下 `periodId` 恒为
+   `UNVERIFIED_PERIOD`；保护的解除依赖"读数下降"而非"周期变化"。若该接口返回的不是当月累计量，
+   解除时机将与预期不符（见 `aliyun-api-contract.md` §F）。
+3. **停机路径无实机证据**。保活路径已实测成功（`start → Accepted`），但 `StopInstance` 与
+   `shutdownMode` 在本项目里**从未在真机验证过**。建议先以 `notify_only` 观察口径，确认无误
+   再切到 `stop_and_notify`。
+
 **注意**：`actionCooldownSeconds` **不是**这个间隔。它只约束计划开关机与阈值停机，
 不约束保活重试。
 

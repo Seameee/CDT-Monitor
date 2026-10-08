@@ -137,19 +137,32 @@ CDT 只读权限与目标实例的 `StartInstance`/`StopInstance` 权限。
 | `enabled` | `false` | 为 false 时直接返回，不评估、不读取 |
 | `deviceVerification` 两项 | `false` | 未自证时只评估、只记录拒绝原因，**绝不**发 Start/Stop |
 
-**开启保活的最简配置**（只监控一台实例时，一行就够）：
+**推荐配置**（只监控一台实例、一个流量范围时，一行即可覆盖保活 + 超阈值保护）：
 
 ```json
 {
   "schemaVersion": 1,
   "enabled": true,
   "verifiedOnDevice": "2026-10-09",
-  "keepAlive": true
+  "keepAlive": true,
+  "stopWhenOverThreshold": true
 }
 ```
 
-`verifiedOnDevice` 填**你实际做真机验证的那天**。`keepAlive: true` 会自动套用到你配置的那一台实例
-（`allowedInstanceIds` 与 `credentialId` 会自动填好，你不需要知道内部 id）。
+> 这两个简写都**需要先填 `CDT_QUOTA`**（本周期流量上限），否则算不出百分比。direct 模式下
+> 没配上限会**直接报错**，而不是留一个永远不会触发的"保护"。
+
+两个简写分别做什么：
+
+| 字段 | 作用 |
+| --- | --- |
+| `keepAlive` | 实例被停机后**自动拉起**（仅在允许时段内、且未超阈值时） |
+| `stopWhenOverThreshold` | 流量超阈值后**自动停机**，并在超阈值期间**禁止保活把它拉回来** |
+
+两者会自动套用到你配置的那一台实例 / 那一个范围（`allowedInstanceIds`、`credentialId`、
+`scopeId` 自动填好，你不需要知道内部 id）。
+
+`verifiedOnDevice` 填**你实际做真机验证的那天**。
 
 需要多实例、只停机不保活、按范围熔断等高级用法时，改用完整字段：
 
