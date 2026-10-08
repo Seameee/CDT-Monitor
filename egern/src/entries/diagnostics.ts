@@ -205,6 +205,9 @@ export default async function main(ctx: EgernScriptContext): Promise<unknown> {
     `控制配置指纹：${controlFingerprint(config)}`,
     `可引用 id：${[
       ...config.credentials.map((credential) => `凭据=${credential.id}`),
+      // Scope ids are needed to enable over-threshold stop protection, and like
+      // the others they appear nowhere in the UI.
+      ...config.trafficScopes.map((scope) => `范围=${scope.id}`),
       ...config.instances.map((instance) => `实例=${instance.id}`),
     ].join(" ") || "（无）"}`,
   ];
