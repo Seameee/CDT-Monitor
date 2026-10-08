@@ -5,7 +5,7 @@
   "ref": "main",
   "repoSlug": "Seameee/CDT-Monitor",
   "releaseBaseUrl": "https://raw.githubusercontent.com/Seameee/CDT-Monitor/main/egern/dist",
-  "generatedAt": "2026-10-08T00:53:28.000Z",
+  "generatedAt": "2026-10-08T01:02:18.000Z",
   "esbuildTarget": "es2020",
   "minified": false,
   "scripts": [
@@ -82,8 +82,8 @@
     {
       "name": "cdt-diagnostics.js",
       "kind": "read",
-      "bytes": 68241,
-      "sha256": "b17d1569be3458e50aa1b040937562488cdd0c29060c8552e2d14e284d117f5a",
+      "bytes": 68282,
+      "sha256": "59a27762c99ab2f650a4021985cb851a12804e2f935f0540d399a8ce8783a87c",
       "inputs": [
         "src/domain/usage.ts",
         "src/domain/models.ts",

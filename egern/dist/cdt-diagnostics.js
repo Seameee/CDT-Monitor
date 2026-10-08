@@ -1795,7 +1795,7 @@ function runProbes(ctx) {
   })();
   probes.push({
     label: "crypto.getRandomValues",
-    value: hasGetRandomValues ? "可用（非ce安全随机数）" : hasCrypto ? "存在但无 getRandomValues" : "不可用",
+    value: hasGetRandomValues ? "可用（宿主提供）" : hasCrypto ? "存在但无 getRandomValues" : "不可用",
     ok: hasGetRandomValues
   });
   probes.push({
@@ -1958,7 +1958,7 @@ function groupProbes(probes) {
     if (probe.value.startsWith("未提供")) return "未提供";
     if (probe.value.startsWith("存在")) return "有(不依赖)";
     if (probe.value.startsWith("同步读写正常")) return "正常";
-    return probe.value.slice(0, 10);
+    return probe.value.length <= 16 ? probe.value : `${probe.value.slice(0, 15)}…`;
   };
   return [
     `全局：crypto=${find("crypto.getRandomValues")} TextEncoder=${find("TextEncoder")} btoa=${find("btoa/atob")} fetch=${find("fetch")}`,

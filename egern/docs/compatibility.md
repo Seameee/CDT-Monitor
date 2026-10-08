@@ -30,11 +30,11 @@
 | env 优先级 Module > Widget > Script | 官方文档 | 官方契约 | 视图变量只放 widget env |
 | `compat_arguments` 的 `{{{KEY}}}` 文本替换 | 官方文档 | 官方契约 | 仅用于 `MODULE_ID` 名称前缀 |
 | `env_schema` 仅 `name/description/default_value/options` | 官方文档 | 官方契约 | 校验脚本强制检查；default 与代码默认值一致 |
-| **`ctx.storage` 跨执行/跨上下文共享** | 文档未承诺 | **待实机验证** | 见 §2 |
+| **`ctx.storage` 跨执行/跨上下文共享** | 文档未承诺 | **部分实测**：同模块 schedule→generic 已观测共享；跨 profile、widget 扩展与主 App 仍未知 | 见 §2、§9 |
 | **`ctx.storage` 事务/CAS/TTL/枚举** | 文档未提供 | **确认不存在** | 不使用；改为按已知 key 集合管理 |
-| **安全随机数（`crypto.getRandomValues`）** | 文档未提供 | **待实机验证** | 运行时探测；缺失时降级并如实标注 |
-| `TextEncoder` / `btoa` / `atob` | 文档未提供 | **待实机验证** | **完全不依赖**：自行实现 UTF-8/Base64/SHA-1 |
-| 全局 `fetch` | 文档未提供 | **待实机验证** | **不使用**；只用 `ctx.http` |
+| **安全随机数（`crypto.getRandomValues`）** | 文档未提供 | **实测可用** | 运行时探测；缺失时降级并如实标注 |
+| `TextEncoder` / `btoa` / `atob` | 文档未提供 | **实测可用** | **仍然完全不依赖**：自行实现 UTF-8/Base64/SHA-1 |
+| 全局 `fetch` | 文档未提供 | **实测可用** | **不使用**；只用 `ctx.http` |
 | 跨文件 `import`（运行时） | 文档未提供 | **待实机验证** | 构建期打包成单文件，运行时不依赖 |
 | `ctx.confirm` / `ctx.source` / `scripts/run` | 文档未提供 | **确认不存在** | 不调用；控制确认改用一次性意图 |
 | `Intl.DateTimeFormat` 任意时区 | 文档未提供 | **待实机验证** | 运行时探测；失败时降级到固定 +08:00 或停用本地定时 |
@@ -238,6 +238,47 @@ iOS 不保证定时脚本被唤醒（后台、锁屏、低电量、强退都会�
 **不声称用量数值绝对准确**。
 
 完整待核实清单见 [aliyun-api-contract.md](aliyun-api-contract.md) 第 F 节。
+
+---
+
+## 9. 实机观测记录
+
+**性质说明**：以下由**用户在自己的设备上执行**得到，不是本项目自动测试的产物。
+原文是 `cdt-main-diagnostics` 的原始 Widget DSL 输出，未经改写。单次观测，**不能**外推到
+其他 Egern 版本、其他 Profile 或其他用户。
+
+### 2026-10-08 · Egern 2.21.0 · iOS · 直连模式
+
+来源：用户手动运行 `cdt-main-diagnostics`（作为 `systemMedium` 小组件）的输出。
+
+| 观测项 | 结果 |
+| --- | --- |
+| `ctx.app.version` | `2.21.0`（可读） |
+| `crypto.getRandomValues` | 可用 → **nonce 有加密强度来源** |
+| `TextEncoder` | 可用 |
+| `btoa` / `atob` | 可用 |
+| 全局 `fetch` | 可用 |
+| `ctx.http` / `ctx.storage` / `ctx.notify` | 均可用 |
+| `ctx.widgetFamily` | 可用（本次为 `systemMedium`） |
+| `ctx.cron` | generic 脚本「未提供」——与官方文档一致（cron 只属于 schedule） |
+| **schedule 脚本自动执行** | **已观测**：automation 在无人干预下执行并写下运行记录 |
+| **跨上下文 storage 共享** | **已观测**：`schedule`（automation）写下的运行记录，被 `generic`（diagnostics）读到 |
+| **云写路径** | **已观测成功**：`动作 start → Accepted instance-main`，即 `StartInstance` 被云端受理 |
+
+**这几条的实际意义**：
+
+- 「schedule 会不会被自动唤醒」不再是纯理论问题——**它确实跑起来了**；但**跑了多少次、间隔多准**
+  仍未测量（见 §4）。
+- 跨上下文共享**至少在同模块的 schedule→generic 方向成立**，这比项目原先假定的
+  「默认不共享」更乐观。项目仍按不共享实现（§2），因为多一次只读请求的代价远小于 widget 永久空白。
+- `crypto.getRandomValues` 可用意味着 §6 的随机数降级路径在实际设备上**不会被触发**。
+
+**仍然未知（不要因为上表而放松）**：
+
+1. widget 扩展与主 App 之间是否共享 storage；
+2. 多个 Profile / 多个模块实例之间是否共享；
+3. iOS 唤醒 schedule 的实际频率与延迟分布；
+4. 跨执行持久化的**可靠边界**（例如设备重启、App 被杀死之后是否仍在）。
 
 ---
 
