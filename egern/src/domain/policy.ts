@@ -371,7 +371,12 @@ export function evaluateAutomation(
           scopeId: scope?.id ?? null,
           instanceId: instance.id,
           reason: "实例在允许时段内停止，执行保活",
-          // One keep-alive attempt per minute at most.
+          // The minute bucket deduplicates only *within* one minute: two runs in
+          // the same minute cannot both start the instance. It deliberately does
+          // NOT apply `actionCooldownSeconds`, because retrying a failed rescue on
+          // the next run is desirable — a transient error should not leave the
+          // instance down for a further ten minutes. Repeated identical failures
+          // are instead kept quiet at the notification layer.
           idempotencyKey: `keepalive:start:${instance.id}:${Math.floor(now.getTime() / 60000)}`,
           shutdownMode: null,
         });

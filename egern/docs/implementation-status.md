@@ -16,7 +16,7 @@
 | 项目 | 证据 |
 | --- | --- |
 | TypeScript 类型检查 | `npm run typecheck` 退出码 `0` |
-| 离线测试 | `npm test`：**220 项全部通过，0 失败** |
+| 离线测试 | `npm test`：**223 项全部通过，0 失败** |
 | 构建 | `npm run build`：5 个脚本 + 1 个模块 + `manifest.json` |
 | 模块校验 | `npm run check:modules` 通过 |
 | 产物校验 | `npm run check:bundles` 通过（含读写边界断言） |

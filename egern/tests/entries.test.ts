@@ -13,11 +13,12 @@ import assert from "node:assert/strict";
 import widgetEntry from "../src/entries/widget.ts";
 import refreshEntry from "../src/entries/refresh.ts";
 import diagnosticsEntry from "../src/entries/diagnostics.ts";
-import automationEntry from "../src/entries/automation.ts";
+import automationEntry, { shouldNotifyAction } from "../src/entries/automation.ts";
 import controlEntry from "../src/entries/control.ts";
 import { WIDGET_FAMILIES } from "../src/host/types.ts";
 import { createFakeContext } from "./host-fake.ts";
 import type { RecordedRequest } from "./host-fake.ts";
+import type { Cache } from "../src/services/cache.ts";
 import { controlFingerprint } from "../src/services/control.ts";
 import { parseConfig } from "../src/config/parse.ts";
 
@@ -541,4 +542,64 @@ test("diagnostics prints its own control-config fingerprint", async () => {
   const fake = createFakeContext({ env: baseEnv(), responder: aliyunResponder });
   const text = JSON.stringify(await diagnosticsEntry(fake.ctx));
   assert.ok(text.includes("控制配置指纹"));
+});
+
+
+/* ------------------- action-notification throttling ---------------------- */
+
+/**
+ * A minimal Cache stand-in for the throttle.
+ *
+ * The fake context has no injectable clock, so driving this through the entry
+ * twice would not actually advance the one-minute idempotency bucket — the
+ * second call would be suppressed by the claim rather than by the throttle,
+ * and the assertion would pass for the wrong reason.
+ */
+function noticeCache(): Cache {
+  const store = new Map<string, unknown>();
+  return {
+    read: <T,>(entityId: string, _kind: "alert", validate: (value: unknown) => T | null): T | null =>
+      store.has(entityId) ? validate(store.get(entityId)) : null,
+    write: (entityId: string, _kind: "alert", data: unknown): number | null => {
+      store.set(entityId, data);
+      return 1;
+    },
+  } as unknown as Cache;
+}
+
+test("a success always notifies, even when the previous outcome was identical", () => {
+  const cache = noticeCache();
+  const at = new Date("2026-10-09T00:00:00Z");
+  assert.equal(shouldNotifyAction(cache, "instance-main", "start", "Accepted", at), true);
+  // A second rescue afterwards is exactly what the user must not miss.
+  assert.equal(shouldNotifyAction(cache, "instance-main", "start", "Accepted", at), true);
+});
+
+test("an unchanged failure notifies once, then stays quiet for an hour", () => {
+  const cache = noticeCache();
+  const first = new Date("2026-10-09T00:00:00Z");
+  assert.equal(shouldNotifyAction(cache, "instance-main", "start", "AccessDenied", first), true);
+  assert.equal(
+    shouldNotifyAction(cache, "instance-main", "start", "AccessDenied", new Date("2026-10-09T00:05:00Z")),
+    false,
+  );
+  assert.equal(
+    shouldNotifyAction(cache, "instance-main", "start", "AccessDenied", new Date("2026-10-09T00:59:00Z")),
+    false,
+  );
+  // ...but it must not stay silent forever.
+  assert.equal(
+    shouldNotifyAction(cache, "instance-main", "start", "AccessDenied", new Date("2026-10-09T01:01:00Z")),
+    true,
+  );
+});
+
+test("a change of failure reason notifies immediately", () => {
+  const cache = noticeCache();
+  const first = new Date("2026-10-09T00:00:00Z");
+  assert.equal(shouldNotifyAction(cache, "instance-main", "start", "AccessDenied", first), true);
+  assert.equal(
+    shouldNotifyAction(cache, "instance-main", "start", "NetworkError", new Date("2026-10-09T00:02:00Z")),
+    true,
+  );
 });

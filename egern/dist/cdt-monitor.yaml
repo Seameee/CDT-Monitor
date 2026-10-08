@@ -126,6 +126,10 @@ env_schema:
       （crossExecutionIntentClaim = 意图能被跨执行记住；hostSerializesSameTarget = 同目标不会并发执行。）
       未验证请留空。多实例、按范围停机等高级用法请用完整字段：
       credentialId / allowedInstanceIds / scopes / instances / actionCooldownSeconds / pauseUntil。
+      关于频率：定时脚本声明为每 5 分钟一次，但 iOS 不保证按时唤醒，实际间隔以诊断里
+      「上次自动策略」的运行时间为准。actionCooldownSeconds（默认 600）只约束计划开关机与
+      阈值停机，不约束保活重试；保活的同一分钟只尝试一次，失败会在下一轮重试，
+      但重复的相同失败通知会被静默一小时。
       任何未知字段、自相矛盾的写法都会导致控制保持关闭。保活仅在 CDT_MODE=direct 下可用。
   CDT_CONTROL_INTENT_JSON:
     name: "一次性控制意图（JSON，可留空）"

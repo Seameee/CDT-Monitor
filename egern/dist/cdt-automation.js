@@ -292,7 +292,12 @@ function evaluateAutomation(snapshot, config, now, timeZone) {
           scopeId: scope?.id ?? null,
           instanceId: instance.id,
           reason: "实例在允许时段内停止，执行保活",
-          // One keep-alive attempt per minute at most.
+          // The minute bucket deduplicates only *within* one minute: two runs in
+          // the same minute cannot both start the instance. It deliberately does
+          // NOT apply `actionCooldownSeconds`, because retrying a failed rescue on
+          // the next run is desirable — a transient error should not leave the
+          // instance down for a further ten minutes. Repeated identical failures
+          // are instead kept quiet at the notification layer.
           idempotencyKey: `keepalive:start:${instance.id}:${Math.floor(now.getTime() / 6e4)}`,
           shutdownMode: null
         });
@@ -4221,6 +4226,9 @@ async function main(ctx) {
       code: outcome.code,
       message: outcome.message
     });
+    if (!shouldNotifyAction(cache, decision.instanceId, writes[writes.length - 1]?.action ?? "start", outcome.code, now)) {
+      continue;
+    }
     await dispatchNotification(
       notificationDeps,
       {
@@ -4266,6 +4274,27 @@ async function main(ctx) {
     now
   );
 }
+var FAILURE_RENOTIFY_SECONDS = 3600;
+function validateActionNotice(value) {
+  if (value === null || typeof value !== "object") return null;
+  const record = value;
+  if (typeof record["code"] !== "string" || typeof record["at"] !== "string") return null;
+  return { code: record["code"], at: record["at"] };
+}
+function shouldNotifyAction(cache, instanceId, action, code, now) {
+  const key = `action-notice:${instanceId}:${action}`;
+  const previous = cache.read(key, "alert", validateActionNotice);
+  const notify = () => {
+    cache.write(key, "alert", { code, at: now.toISOString() }, now);
+    return true;
+  };
+  if (code === "Accepted") return notify();
+  if (previous === null) return notify();
+  if (previous.code !== code) return notify();
+  const parsed = Date.parse(previous.at);
+  if (!Number.isFinite(parsed)) return notify();
+  return (now.getTime() - parsed) / 1e3 >= FAILURE_RENOTIFY_SECONDS ? notify() : false;
+}
 function claimDecision(cache, key, cooldownSeconds, now) {
   const previous = cache.read(
     key,
@@ -4282,5 +4311,6 @@ function claimDecision(cache, key, cooldownSeconds, now) {
   return true;
 }
 export {
-  main as default
+  main as default,
+  shouldNotifyAction
 };

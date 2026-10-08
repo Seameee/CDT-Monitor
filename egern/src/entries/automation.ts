@@ -27,6 +27,7 @@ import {
   executeControlIntent,
 } from "../services/control.ts";
 import { dispatchNotification } from "../services/notifications.ts";
+import type { Cache } from "../services/cache.ts";
 import { writeRunLog } from "../services/runlog.ts";
 import type { RunLogWrite } from "../services/runlog.ts";
 import type { NotificationEvent } from "../services/notifications.ts";
@@ -180,9 +181,12 @@ export default async function main(ctx: EgernScriptContext): Promise<void> {
       message: outcome.message,
     });
 
-    // Notify on every action attempt, so the result is visible on the phone
-    // without opening the app. `action` events are not de-duplicated, because
-    // each attempt genuinely happened.
+    // Notify so the result reaches the phone without opening the app. Repeated
+    // identical failures are throttled (see shouldNotifyAction); the run log above
+    // still records every attempt.
+    if (!shouldNotifyAction(cache, decision.instanceId, writes[writes.length - 1]?.action ?? "start", outcome.code, now)) {
+      continue;
+    }
     await dispatchNotification(
       notificationDeps,
       {
@@ -236,6 +240,54 @@ export default async function main(ctx: EgernScriptContext): Promise<void> {
     },
     now,
   );
+}
+
+/**
+ * How long an unchanged action *failure* stays quiet before being repeated.
+ *
+ * Successes always notify: rescuing a stopped instance is the whole point, and it
+ * is rare. Failures repeat on every run otherwise — roughly every 5 minutes —
+ * which is exactly how a user learns to ignore the notification that matters.
+ */
+const FAILURE_RENOTIFY_SECONDS = 3600;
+
+/** Persisted marker of the last outcome we notified about. */
+interface ActionNotice {
+  code: string;
+  at: string;
+}
+
+function validateActionNotice(value: unknown): ActionNotice | null {
+  if (value === null || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  if (typeof record["code"] !== "string" || typeof record["at"] !== "string") return null;
+  return { code: record["code"], at: record["at"] };
+}
+
+/** Whether this outcome deserves a notification, and records that we sent one. */
+export function shouldNotifyAction(
+  cache: Cache,
+  instanceId: string,
+  action: string,
+  code: string,
+  now: Date,
+): boolean {
+  const key = `action-notice:${instanceId}:${action}`;
+  const previous = cache.read<ActionNotice>(key, "alert", validateActionNotice);
+  // The marker records when we last *notified*, not when we last ran. Refreshing
+  // it on every run would keep pushing the deadline out and an unchanged failure
+  // would stay silent forever instead of every FAILURE_RENOTIFY_SECONDS.
+  const notify = (): boolean => {
+    cache.write(key, "alert", { code, at: now.toISOString() }, now);
+    return true;
+  };
+  // A successful rescue is always worth reporting.
+  if (code === "Accepted") return notify();
+  if (previous === null) return notify();
+  if (previous.code !== code) return notify();
+  const parsed = Date.parse(previous.at);
+  if (!Number.isFinite(parsed)) return notify();
+  return (now.getTime() - parsed) / 1000 >= FAILURE_RENOTIFY_SECONDS ? notify() : false;
 }
 
 /**

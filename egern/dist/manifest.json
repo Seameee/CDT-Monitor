@@ -5,7 +5,7 @@
   "ref": "main",
   "repoSlug": "Seameee/CDT-Monitor",
   "releaseBaseUrl": "https://raw.githubusercontent.com/Seameee/CDT-Monitor/main/egern/dist",
-  "generatedAt": "2026-10-08T01:02:18.000Z",
+  "generatedAt": "2026-10-08T01:09:10.000Z",
   "esbuildTarget": "es2020",
   "minified": false,
   "scripts": [
@@ -148,8 +148,8 @@
     {
       "name": "cdt-automation.js",
       "kind": "write",
-      "bytes": 147666,
-      "sha256": "1257c2336bfae1d3b5ffb954d777f99e7b8b363b0f40d06932dfebaf67d78922",
+      "bytes": 149183,
+      "sha256": "48a19563864b1ba3f12bd48cfad6e205c6c14e58d2d59be8fd304638236b14c5",
       "inputs": [
         "src/domain/models.ts",
         "src/domain/schedule.ts",
@@ -186,8 +186,8 @@
   "modules": [
     {
       "name": "cdt-monitor.yaml",
-      "bytes": 8941,
-      "sha256": "ea72bfabdc9e8fa673dbc6cf3b053493aa64c35afd1b92e3ba68494ae4e4c2dd"
+      "bytes": 9356,
+      "sha256": "9bd93113ddc41fea251b4011d443b97f201c17a8754c01ea995c25de450c6770"
     }
   ]
 }
